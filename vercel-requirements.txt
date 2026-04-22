@@ -1,0 +1,18 @@
+# Vercel / CI: paths relative to repository root (install with `uv pip install -r vercel-requirements.txt` from repo root).
+-e ./packages/schemas
+-e ./packages/prompts
+-e ./packages/shared
+-e ./packages/agents
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic-settings>=2.6
+pyjwt[crypto]>=2.9
+cryptography>=43
+httpx>=0.27
+openai>=1.59
+langfuse>=2.57
+supabase>=2.10
+fpdf2>=2.8
+pypdf>=5.0
+python-docx>=1.1
+python-multipart>=0.0.9

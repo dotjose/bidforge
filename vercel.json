@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "npm install && curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=\"$HOME/.local/bin:$PATH\" && uv pip install --system --break-system-packages -r api/requirements.txt",
+  "installCommand": "npm install && curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=\"$HOME/.local/bin:$PATH\" && uv pip install --system --break-system-packages -r vercel-requirements.txt",
   "buildCommand": "npm run build",
   "functions": {
     "api/**/*.py": {
