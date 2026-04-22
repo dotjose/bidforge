@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bidforge-agents"
+version = "0.1.0"
+description = "Deterministic BidForge agent stages (pure functions + contracts)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "bidforge-schemas",
+  "bidforge-prompts",
+  "bidforge-shared",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["bidforge_agents"]

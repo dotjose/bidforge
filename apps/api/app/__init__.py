@@ -1,0 +1,1 @@
+"""BidForge FastAPI application package."""

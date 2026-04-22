@@ -1,0 +1,61 @@
+# BidForge
+
+BidForge helps you turn a client brief—whether a formal RFP or a short job post—into a structured proposal you can edit, review, and ship with confidence.
+
+## What it does
+
+You paste or import your brief. BidForge organizes the requirements, drafts a response in the right format, highlights risks and gaps, and suggests a timeline when the brief supports it. Past wins and reusable language can strengthen future drafts when you choose to save them.
+
+## Modes
+
+- **Enterprise** — Long-form, sectioned proposals suited to formal bids and multi-stakeholder reviews.
+- **Freelance win** — Concise replies for marketplaces and direct outreach, with emphasis on a strong hook and reply-oriented signals.
+
+Switch modes from the app header or set your default under **Settings → Personal**.
+
+## How the workflow feels
+
+1. **Dashboard** — Start a new proposal or import text; your list stays empty until real runs exist—no demo listings.
+2. **New proposal** — Large brief area on the left; **Draft**, **Review**, **Timeline**, and **Insights** on the right, all driven by your latest generation.
+3. **Drafts** — Reserved for saved history as your account grows.
+4. **Memory** — Describes how your intelligence library will surface; per-run retrieval appears under **Insights** on the proposal screen.
+5. **Insights** — Reserved for cross-proposal analytics as they become available.
+
+## Who it is for
+
+Consultancies, agencies, and solo operators who respond to formal RFPs and to short-form client opportunities—and want one calm workspace instead of scattered docs.
+
+## Getting started
+
+### Web app
+
+```bash
+cp apps/web/.env.example apps/web/.env.local
+# Add Clerk keys from https://dashboard.clerk.com
+
+npm install
+npm run dev
+```
+
+Open http://localhost:3000, sign in, and use **New proposal** from the sidebar.
+
+### API (optional, for full generation)
+
+```bash
+cp apps/api/.env.example apps/api/.env
+cd apps/api && uv sync && uv run uvicorn app.main:app --reload --port 8000
+```
+
+Configure environment variables as described in `apps/web/.env.example` and `apps/api/.env.example`.
+
+## Monorepo layout
+
+- `apps/web` — Next.js product UI
+- `apps/api` — Backend service for proposal generation
+- `packages/web-sdk` — Typed client used by the browser
+- `packages/agents`, `packages/prompts`, `packages/schemas`, `packages/shared` — Server-side generation assets
+- `infra/` — Database and observability configuration for operators
+
+## Product documentation
+
+See [`docs/agents.md`](./docs/agents.md) for a concise, product-level overview of the intelligence roles behind each run.

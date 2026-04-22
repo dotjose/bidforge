@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bidforge-schemas"
+version = "0.1.0"
+description = "Shared Pydantic contracts for BidForge agents and API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["bidforge_schemas"]

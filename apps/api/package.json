@@ -1,0 +1,9 @@
+{
+  "name": "api",
+  "private": true,
+  "scripts": {
+    "dev": "uv sync && uv run uvicorn app.main:app --reload --port 8000",
+    "test": "uv sync && uv run pytest tests/ -v",
+    "lint": "uv run ruff check app tests"
+  }
+}

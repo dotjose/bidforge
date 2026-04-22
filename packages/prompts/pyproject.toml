@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bidforge-prompts"
+version = "0.1.0"
+description = "Versioned prompt templates for BidForge agents (no business logic)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["bidforge_prompts"]
