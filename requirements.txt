@@ -1,4 +1,4 @@
-# Vercel / CI: paths relative to repository root (install with `uv pip install -r vercel-requirements.txt` from repo root).
+# Repo root: paths for Vercel / CI (install from monorepo root). Local API dev: use `cd api && uv sync`.
 -e ./packages/schemas
 -e ./packages/prompts
 -e ./packages/shared
