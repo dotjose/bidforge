@@ -3,6 +3,11 @@
   "private": true,
   "packageManager": "npm@11.5.2",
   "workspaces": ["apps/*", "packages/*"],
+  "dependencies": {
+    "next": "15.5.15",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  },
   "scripts": {
     "dev": "turbo run dev",
     "dev:web": "npm run dev --workspace=web",

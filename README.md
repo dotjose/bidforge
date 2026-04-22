@@ -50,7 +50,7 @@ Configure environment variables as described in `apps/web/.env.example` and `api
 
 ### Vercel
 
-Use the **repository root** as the Vercel project root (never `apps/api` — that path does not exist). Root `vercel.json` runs `npm install`, installs **`uv`**, runs **`uv python install 3.12`** (the Node build image defaults to Python 3.9; workspace packages require **≥3.11**), then **`uv pip install --system --break-system-packages --python 3.12 -r requirements.txt`** (root file with `./packages/…` editables), then `npm run build` (Turbo builds `apps/web`). `.python-version` pins **3.12** for the Python runtime. Enable **Include files outside the root** if your preset scopes the checkout.
+Use the **repository root** as the Vercel **Root Directory** (leave the field empty in project settings). Root `package.json` lists **`next`**, **`react`**, and **`react-dom`** so Vercel’s Next.js preset can detect the framework while `apps/web` stays the real app. Root `vercel.json` runs `npm install`, `npm run build` (Turbo → `apps/web`), sets **`outputDirectory`** to `apps/web/.next`, and wires Python under `api/`. Python deps: root **`requirements.txt`** + **`.python-version`** (Vercel installs them for `api/**/*.py`). Enable **Include files outside the root** if your preset scopes the checkout.
 
 ## Monorepo layout
 
