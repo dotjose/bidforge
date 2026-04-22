@@ -44,6 +44,15 @@ def _printable_width(pdf: FPDF) -> float:
     return max(pdf.epw, 40.0)
 
 
+def _clean_risk_line(s: str) -> str:
+    t = (s or "").strip()
+    low = t.lower()
+    for prefix in ("freelance_fail:", "missing_requirement:", "compliance_risk:", "weak_claim:"):
+        if low.startswith(prefix):
+            return t[len(prefix) :].strip()
+    return t
+
+
 def build_proposal_pdf_bytes(
     *,
     title: str,
@@ -55,8 +64,10 @@ def build_proposal_pdf_bytes(
     memory_insight_bullets: list[str] | None = None,
     memory_appendix: str | None = None,
 ) -> bytes:
-    """Render proposal body + optional short review summary. Legacy `memory_appendix` is ignored."""
+    """Export client-ready PDF: title, summary, approach, timeline, risks — no raw RFP or memory appendix."""
     _ = memory_appendix
+    _ = memory_insight_bullets
+    _ = score
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=14)
     pdf.add_page()
@@ -75,20 +86,24 @@ def build_proposal_pdf_bytes(
     )
     pdf.ln(2)
 
+    ex = (sections.get("executive_summary") or "").strip()
+    ta = (sections.get("technical_approach") or "").strip()
+    dp = (sections.get("delivery_plan") or "").strip()
+    rm = (sections.get("risk_management") or "").strip()
+
     if pipeline_mode == "freelance":
+        technical_merged = "\n\n".join(p for p in (ta, dp, rm) if p)
         order = [
-            ("Hook", sections.get("executive_summary") or ""),
-            ("Understanding of your need", sections.get("technical_approach") or ""),
-            ("Approach & relevant experience", sections.get("delivery_plan") or ""),
-            ("Call to action", sections.get("risk_management") or ""),
+            ("Executive summary", ex),
+            ("Technical approach", technical_merged),
         ]
     else:
+        technical_merged = "\n\n".join(p for p in (ta, dp) if p)
         order = [
-            ("Executive summary", sections.get("executive_summary") or ""),
-            ("Technical approach", sections.get("technical_approach") or ""),
-            ("Delivery plan", sections.get("delivery_plan") or ""),
-            ("Risk management", sections.get("risk_management") or ""),
+            ("Executive summary", ex),
+            ("Technical approach", technical_merged),
         ]
+
     for head, body in order:
         if not body.strip():
             continue
@@ -146,77 +161,40 @@ def build_proposal_pdf_bytes(
             )
         pdf.ln(2)
 
-    bullets = [b.strip() for b in (memory_insight_bullets or []) if isinstance(b, str) and b.strip()][:8]
-    issue_lines = [i.strip() for i in (issues or []) if isinstance(i, str) and i.strip()][:12]
-    if score is not None or issue_lines or bullets:
+    risk_chunks: list[str] = []
+    if pipeline_mode == "enterprise" and rm:
+        risk_chunks.append(rm)
+    for i in issues or []:
+        if isinstance(i, str) and i.strip():
+            c = _clean_risk_line(i)
+            if c:
+                risk_chunks.append(c)
+    risks_body = "\n\n".join(dict.fromkeys(risk_chunks))[:14_000]
+
+    if risks_body.strip():
         pdf.ln(2)
         pdf.set_x(pdf.l_margin)
         pdf.set_font("Helvetica", "B", 11)
         pdf.multi_cell(
             w,
             7,
-            _pdf_text("Review summary"),
+            _pdf_text("Risks"),
             align=Align.L,
             new_x=XPos.LMARGIN,
             new_y=YPos.NEXT,
             wrapmode=WrapMode.WORD,
         )
         pdf.set_font("Helvetica", size=10)
-        if score is not None:
-            pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(
-                w,
-                5,
-                _pdf_text(f"Verifier score: {int(score)}/100"),
-                align=Align.L,
-                new_x=XPos.LMARGIN,
-                new_y=YPos.NEXT,
-                wrapmode=WrapMode.WORD,
-            )
-        if issue_lines:
-            pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(
-                w,
-                5,
-                _pdf_text("Top issues:"),
-                align=Align.L,
-                new_x=XPos.LMARGIN,
-                new_y=YPos.NEXT,
-                wrapmode=WrapMode.WORD,
-            )
-            for line in issue_lines:
-                pdf.set_x(pdf.l_margin + 4)
-                pdf.multi_cell(
-                    w - 4,
-                    5,
-                    _pdf_text(f"- {_safe_txt(line, 400)}"),
-                    align=Align.L,
-                    new_x=XPos.LMARGIN,
-                    new_y=YPos.NEXT,
-                    wrapmode=WrapMode.WORD,
-                )
-        if bullets:
-            pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(
-                w,
-                5,
-                _pdf_text("Win-pattern signals used:"),
-                align=Align.L,
-                new_x=XPos.LMARGIN,
-                new_y=YPos.NEXT,
-                wrapmode=WrapMode.WORD,
-            )
-            for b in bullets:
-                pdf.set_x(pdf.l_margin + 4)
-                pdf.multi_cell(
-                    w - 4,
-                    5,
-                    _pdf_text(f"- {_safe_txt(b, 320)}"),
-                    align=Align.L,
-                    new_x=XPos.LMARGIN,
-                    new_y=YPos.NEXT,
-                    wrapmode=WrapMode.WORD,
-                )
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(
+            w,
+            5,
+            _pdf_text(_break_long_words(_safe_txt(risks_body, 14_000))),
+            align=Align.L,
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+            wrapmode=WrapMode.CHAR,
+        )
 
     raw = pdf.output(dest="S")
     if isinstance(raw, (bytes, bytearray)):

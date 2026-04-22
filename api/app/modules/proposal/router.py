@@ -176,6 +176,10 @@ class ProposalRunResponse(BaseModel):
         default=True,
         description="False when no indexed proposal memory was available for this run.",
     )
+    memory_status: Literal["empty", "grounded"] = Field(
+        default="grounded",
+        description="Whether tenant-scoped retrieval returned usable patterns for this brain.",
+    )
     grounding_warning: str | None = Field(
         default=None,
         description="Shown when the draft was not historically grounded.",
@@ -386,6 +390,7 @@ async def run_proposal(
             trace_id=rid,
             run_id=rid,
             memory_grounded=False,
+            memory_status="empty",
             grounding_warning=None,
             status="degraded",
             pipeline_metadata=meta,
@@ -423,6 +428,9 @@ async def run_proposal(
         trace_id=rid,
         run_id=rid,
         memory_grounded=bool(result.get("memory_grounded", True)),
+        memory_status="empty"
+        if str(result.get("memory_status") or "").lower() == "empty"
+        else "grounded",
         grounding_warning=result.get("grounding_warning"),
         status=api_status,
         pipeline_metadata=meta,
@@ -512,7 +520,7 @@ async def get_saved_run(
 @router.post(
     "/export/pdf",
     summary="Export proposal PDF",
-    description="Renders proposal sections, timeline, and optional memory appendix as PDF (authenticated).",
+    description="Renders title, executive summary, technical approach, timeline, and risks only (authenticated).",
     responses={401: {"model": ErrorResponse}},
 )
 async def export_proposal_pdf(
@@ -527,8 +535,8 @@ async def export_proposal_pdf(
         pipeline_mode=body.pipeline_mode,
         score=body.score,
         issues=body.issues,
-        memory_insight_bullets=body.memory_insight_bullets,
-        memory_appendix=body.memory_appendix,
+        memory_insight_bullets=None,
+        memory_appendix=None,
     )
     return Response(
         content=pdf_bytes,

@@ -3,11 +3,8 @@
 FREELANCE_PROPOSAL_PROMPT_VERSION = "2.1.0"
 
 _SYSTEM = f"""version: "{FREELANCE_PROPOSAL_PROMPT_VERSION}"
-You complete a freelance bid AFTER the hook is fixed. This maximizes reply probability — not a generic AI summary.
-If JOB_POST reads like Upwork or a short marketplace brief: shorter paragraphs, strong opening hook (via HOOK_TEXT),
-direct value, crisp CTA — no enterprise RFP sectioning.
-If JOB_POST is a formal RFP excerpt: still use the five JSON fields (not RFP headings), but keep mapping explicit
-to stated deliverables without pasting the tender text.
+You complete a freelance bid AFTER the hook is fixed. Optimize for reply rate: concrete, job-specific, scannable — never a generic capability brochure.
+If JOB_POST reads like Upwork: tight paragraphs, proof-forward, one crisp CTA. If it is a formal RFP excerpt: same JSON shape, map explicitly to named deliverables without pasting tender boilerplate.
 Output ONLY a single JSON object (no markdown fences, no commentary).
 Shape (exact keys):
 {{
@@ -18,11 +15,13 @@ Shape (exact keys):
   "call_to_action": string
 }}
 Rules:
-- hook: MUST equal or lightly polish HOOK_TEXT (same meaning, still 1–3 lines max). This is the "why me for THIS job" screenful.
-- understanding_need: 3–5 lines max, each line one short bullet (use "• " prefix per line OR newline-separated). Paraphrase what they need (signals from JOB_UNDERSTANDING_JSON) — do not paste the job post back.
-- approach: 2–4 short sentences total — execution only, no theory, no "methodology" language. How you will run the first milestone.
-- relevant_experience: ONLY work types relevant to this job. Cite FREELANCE_WIN_MEMORY_JSON patterns by paraphrasing winning phrasing when present; if only synthetic_seed rows, adapt their opener structure without inventing fake clients. No generic "I have worked with many clients".
-- call_to_action: one sentence — simple, direct, low friction (e.g. reply with a time window, 15-min call, or one clarifying question).
+- hook: MUST equal or lightly polish HOOK_TEXT (same meaning, 1–3 lines max). First two lines must hook the reader with THIS role/stack/outcome (name their deliverable or platform when stated).
+- understanding_need: 3–5 short lines (• or newlines). Mirror explicit asks from JOB_UNDERSTANDING_JSON / JOB_POST (tools, pages, integrations, KPIs) — no wall of quoted text.
+- approach: 2–4 sentences — what you will ship in week 1, named artifacts (e.g. wireframes, Elementor templates, API routes), and how you de-risk scope. Zero "we specialize" / "our team" filler.
+- relevant_experience: ONLY patterns relevant to this job. When FREELANCE_WIN_MEMORY_JSON has rows, paraphrase concrete proof hooks (metrics, stack, artifact types). When it is empty [], ground only in JOB_POST language — still cite specific deliverables and constraints; never invent clients or logos.
+- call_to_action: one sentence — low friction (15-min call, async Loom, or one sharp clarifying question + availability).
+- BAD: "We specialize in high-quality…" / "I have extensive experience…" / generic lists that could apply to any post.
+- GOOD: "I can take your existing Elementor site and turn it into a high-converting affiliate hub…" — tie to their words, then proof, then CTA.
 - HARD BAN (do not use anywhere): "extensive experience", "high-quality results", "professional finish", "strong background", "robust", "leverage", "best practices" as filler, "I am confident", "world-class", "cutting-edge" unless tied to a named deliverable in the post.
 - Never use these section titles or equivalents: "Executive summary", "Technical approach", "Delivery plan", "Risk management".
 - Total length target: under ~220 words across all fields. No paragraph longer than 2 sentences except understanding_need bullets.

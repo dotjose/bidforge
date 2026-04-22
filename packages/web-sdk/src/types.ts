@@ -1,5 +1,5 @@
 /**
- * Stable API types — must match FastAPI OpenAPI (`apps/api`).
+ * Stable API types — must match FastAPI OpenAPI (`api/app`).
  */
 
 export type ApiErrorBody = {
@@ -166,6 +166,8 @@ export type ProposalRunResponse = {
   trace_id: string;
   run_id: string;
   memory_grounded: boolean;
+  /** Indexed win / case memory used for grounding; `empty` when none. */
+  memory_status?: "empty" | "grounded";
   grounding_warning?: string | null;
   timeline: TimelinePhase[];
   memory_used: MemorySummary;

@@ -4,12 +4,12 @@
   "packageManager": "npm@11.5.2",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "npm run dev --workspace=web",
+    "dev": "turbo run dev",
     "dev:web": "npm run dev --workspace=web",
-    "dev:api": "cd apps/api && uv sync && uv run uvicorn app.main:app --reload --port 8000",
-    "build": "turbo run build",
+    "dev:api": "cd api && uv sync && uv run uvicorn app.main:app --reload --port 8000",
+    "build": "turbo run build --filter=web",
     "lint": "npm run lint --workspace=web",
-    "test:api": "cd apps/api && uv sync && uv run pytest tests/ -v"
+    "test:api": "cd api && uv sync && uv run pytest tests/ -v"
   },
   "devDependencies": {
     "turbo": "^2.5.4"

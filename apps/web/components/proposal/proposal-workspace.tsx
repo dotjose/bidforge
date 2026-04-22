@@ -567,7 +567,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
           onBlur={() => setJobDescription(briefDraft)}
           spellCheck
           placeholder="Paste the RFP, job post, or buyer notes. Drop a PDF or .txt anywhere in this panel."
-          className="min-h-[600px] w-full flex-1 resize-none border-0 bg-transparent px-1 py-1 text-[17px] leading-[1.65] text-foreground outline-none ring-0 placeholder:text-muted-foreground"
+          className="min-h-[500px] w-full flex-1 resize-y border-0 bg-transparent px-1 py-1 text-[17px] leading-[1.65] text-foreground outline-none ring-0 placeholder:text-muted-foreground"
         />
         <div className="mt-4 flex flex-col gap-4 border-t border-border/60 pt-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -630,7 +630,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto max-w-[800px] px-5 pb-32 pt-8 md:px-8 md:pb-40 md:pt-12 lg:pr-14 lg:pt-14">
+        <div className="w-full px-5 pb-32 pt-8 md:px-8 md:pb-40 md:pt-12 lg:px-6 lg:pb-40 lg:pt-10">
           {isFreelanceRun ? (
             <div className="mb-10 space-y-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-6 dark:bg-violet-500/10">
               {replyLikelihood0_100 != null ? (

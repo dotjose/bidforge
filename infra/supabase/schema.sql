@@ -106,3 +106,16 @@ create table if not exists public.workspace_settings (
 -- Optional: create a vector index after you have sufficient rows with non-null embeddings.
 -- create index freelance_win_memory_embedding_idx on public.freelance_win_memory
 -- using ivfflat (embedding vector_cosine_ops) with (lists = 50);
+
+-- Snippets from completed proposals (optional embedding for future retrieval)
+create table if not exists public.proposal_memory (
+  id uuid primary key default uuid_generate_v4 (),
+  user_id uuid not null references public.users (id) on delete cascade,
+  snippet text not null,
+  type text not null,
+  embedding vector (1536),
+  created_at timestamptz not null default now (),
+  constraint proposal_memory_type_chk check (type in ('win_pattern', 'strong_line'))
+);
+
+create index if not exists proposal_memory_user_created_idx on public.proposal_memory (user_id, created_at desc);

@@ -6,9 +6,98 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from bidforge_shared import OpenRouterLLM
+
 from app.integrations.supabase import get_supabase_client
 
 log = logging.getLogger(__name__)
+
+
+def resolve_users_uuid_for_clerk(clerk_user_id: str) -> UUID | None:
+    sb = get_supabase_client()
+    if sb is None or not clerk_user_id:
+        return None
+    try:
+        res = sb.table("users").select("id").eq("clerk_user_id", clerk_user_id).limit(1).execute()
+    except Exception as e:  # noqa: BLE001
+        log.warning("users id lookup failed: %s", e)
+        return None
+    rows = getattr(res, "data", None) or []
+    if not rows or not isinstance(rows[0], dict):
+        return None
+    raw = rows[0].get("id")
+    try:
+        return UUID(str(raw)) if raw is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def insert_canonical_proposal_row(
+    clerk_user_id: str,
+    *,
+    title: str,
+    body: str,
+    score: int,
+    issues: list[Any],
+    job_description: str,
+) -> str | None:
+    uid = resolve_users_uuid_for_clerk(clerk_user_id)
+    if uid is None:
+        return None
+    sb = get_supabase_client()
+    if sb is None:
+        return None
+    row: dict[str, Any] = {
+        "user_id": str(uid),
+        "title": (title or "")[:512],
+        "body": (body or "")[:200_000],
+        "score": int(score),
+        "issues": issues,
+        "job_description": (job_description or "")[:12_000],
+    }
+    try:
+        res = sb.table("proposals").insert(row).execute()
+    except Exception as e:  # noqa: BLE001
+        log.warning("proposals insert failed: %s", e)
+        return None
+    data = getattr(res, "data", None) or []
+    if not data or not isinstance(data[0], dict):
+        return None
+    raw_id = data[0].get("id")
+    return str(raw_id) if raw_id is not None else None
+
+
+def insert_proposal_memory_entries(
+    clerk_user_id: str,
+    snippets: list[tuple[str, str]],
+    llm: Any,
+) -> None:
+    """Persist `proposal_memory` rows (optional embedding). `snippets` are (type, text) with type in win_pattern|strong_line."""
+    uid = resolve_users_uuid_for_clerk(clerk_user_id)
+    if uid is None or not snippets:
+        return
+    sb = get_supabase_client()
+    if sb is None:
+        return
+    client = llm if isinstance(llm, OpenRouterLLM) else None
+    for typ, text in snippets[:8]:
+        t = (text or "").strip()
+        if not t or typ not in ("win_pattern", "strong_line"):
+            continue
+        row: dict[str, Any] = {"user_id": str(uid), "snippet": t[:8000], "type": typ}
+        if client is not None:
+            try:
+                emb = client.embed_text(t[:2000])
+            except Exception as e:  # noqa: BLE001
+                log.debug("proposal_memory embed skipped: %s", e)
+                emb = None
+            else:
+                if emb is not None and len(emb) == 1536:
+                    row["embedding"] = emb
+        try:
+            sb.table("proposal_memory").insert(row).execute()
+        except Exception as e:  # noqa: BLE001
+            log.warning("proposal_memory insert failed: %s", e)
 
 
 def fetch_freelance_win_memory_rows(clerk_user_id: str, *, limit: int = 8) -> list[dict[str, Any]]:

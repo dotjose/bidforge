@@ -19,8 +19,7 @@ Rules:
 - POSITION BEFORE WORK: `positioning` must answer "why me for THIS job" in one or two sentences — never start with "I am experienced" / "I specialize in" / "I have extensive experience".
 - `strategy`: 2–4 sentences: angle, fear removed, proof direction, and what the first screenful must prove. Tie to JOB_UNDERSTANDING_JSON (urgency, conversion_triggers, risk_concerns).
 - `freelance_hook_strategy`: the highest-leverage field — exact instructions for lines 1–3: what concrete deliverable to name, what metric or outcome to tease, what risk to neutralize. Assume the client scans <10 seconds.
-- `based_on`: ids or labels from FREELANCE_WIN_MEMORY_JSON you actively reuse (phrasing, structure, proof shape). If JSON includes rows with outcome "synthetic_seed", you MAY treat them as style seeds — cite their ids in based_on and say you are adapting (not inventing fake client names).
-- If memory is empty except synthetic_seed rows: still produce a sharp angle; based_on lists those synthetic ids.
+- `based_on`: ids or labels from FREELANCE_WIN_MEMORY_JSON you actively reuse (phrasing, structure, proof shape). When the array is empty, leave `based_on` empty and anchor the angle strictly in JOB_UNDERSTANDING_JSON + JOB_POST_EXCERPT (still no invented clients).
 - `win_themes`: max 4 ultra-short phrases (e.g. "speed-to-first-milestone", "Elementor performance").
 - `differentiators`: max 4 bullets — only differentiators provable from the job + memory (no generic "quality").
 - Ban vague consulting phrases everywhere in this JSON: no "extensive experience", "high-quality results", "professional finish", "strong background", "robust solution", "leverage", "synergy".

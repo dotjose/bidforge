@@ -14,6 +14,9 @@ _FORBIDDEN = frozenset(
         "proposal output",
         "untitled",
         "new proposal",
+        "rfp response",
+        "rfp response:",
+        "strong experience",
     }
 )
 
@@ -21,6 +24,18 @@ _FORBIDDEN = frozenset(
 def _clean_line(s: str) -> str:
     t = re.sub(r"^[\s#>*-]+", "", s).strip()
     t = re.sub(r"\s+", " ", t)
+    low = t.lower()
+    for prefix in (
+        "rfp response:",
+        "rfp response",
+        "bidforge proposal:",
+        "bidforge proposal",
+        "proposal:",
+    ):
+        if low.startswith(prefix):
+            t = t[len(prefix) :].lstrip(" :—-\t")
+            low = t.lower()
+            break
     return t[:200].strip()
 
 
@@ -163,8 +178,12 @@ def infer_proposal_title(
         return _shorten_opportunity_title(req_title, max_len=100)
 
     if lines:
-        snippet = lines[0][:140].strip()
-        if snippet.lower() not in _FORBIDDEN:
-            return _shorten_opportunity_title(snippet, max_len=100)
+        for ln in lines[:6]:
+            snippet = ln[:140].strip()
+            s_low = snippet.lower()
+            if len(snippet) < 12 or s_low in _FORBIDDEN:
+                continue
+            if not _looks_like_compliance_clause(snippet):
+                return _shorten_opportunity_title(snippet, max_len=100)
 
     return "Untitled proposal"

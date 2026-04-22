@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -20,15 +19,12 @@ log = logging.getLogger(__name__)
 
 
 def _resolve_internal_user_id(clerk_user_id: str) -> UUID | None:
-    """Map Clerk user id → internal tenant uuid via `public.users` (single `select *` + configured PK)."""
+    """Map Clerk id → tenant uuid using only `public.users.id` (vector RPC expects uuid `filter_user_id`)."""
     sb = get_supabase_client()
     if sb is None or not clerk_user_id:
         return None
-    pk = (settings.supabase_users_pk_column or "id").strip() or "id"
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", pk):
-        pk = "id"
     try:
-        r = sb.table("users").select("*").eq("clerk_user_id", clerk_user_id).limit(1).execute()
+        r = sb.table("users").select("id").eq("clerk_user_id", clerk_user_id).limit(1).execute()
     except Exception as e:  # noqa: BLE001
         log.warning("users lookup failed: %s", e)
         return None
@@ -36,14 +32,14 @@ def _resolve_internal_user_id(clerk_user_id: str) -> UUID | None:
     if not rows or not isinstance(rows[0], dict):
         return None
     row = rows[0]
-    raw = row.get(pk)
+    raw = row.get("id")
     if raw is None:
-        log.warning("users row missing configured tenant id column %r (set SUPABASE_USERS_PK_COLUMN)", pk)
+        log.warning("users row missing id for clerk_user_id=%r", clerk_user_id[:32])
         return None
     try:
         return UUID(str(raw))
     except (ValueError, TypeError):
-        log.warning("users.%s is not a valid uuid: %r", pk, raw)
+        log.warning("users.id is not a valid uuid: %r", raw)
         return None
 
 

@@ -53,7 +53,9 @@ from app.integrations.proposal_store import (
     build_winning_sections_payload,
     fetch_freelance_win_memory_rows,
     fetch_top_freelance_wins_for_diff,
+    insert_canonical_proposal_row,
     insert_freelance_win_memory,
+    insert_proposal_memory_entries,
     insert_proposal_run,
     merge_freelance_win_rows_into_rag_patterns,
 )
@@ -64,6 +66,25 @@ from app.rag.retrieval import retrieve_rag_context
 from app.workspace.agents import workspace_preferences_block
 
 log = logging.getLogger(__name__)
+
+
+def _proposal_plaintext_for_persistence(payload: dict[str, Any], *, pipeline_mode: str) -> str:
+    prop = payload.get("proposal")
+    if not isinstance(prop, dict):
+        return ""
+    if pipeline_mode == "freelance":
+        fw = prop.get("freelance")
+        if isinstance(fw, dict):
+            keys = ("hook", "understanding_need", "approach", "relevant_experience", "call_to_action")
+            parts = [str(fw.get(k) or "").strip() for k in keys]
+            return "\n\n".join(p for p in parts if p)
+        return ""
+    secs = prop.get("sections")
+    if isinstance(secs, dict):
+        keys2 = ("executive_summary", "technical_approach", "delivery_plan", "risk_management")
+        parts2 = [str(secs.get(k) or "").strip() for k in keys2]
+        return "\n\n".join(p for p in parts2 if p)
+    return ""
 
 
 def _rag_requirement_context(req: RequirementAgentOutput) -> str:
@@ -342,6 +363,37 @@ def _enrich_run_payload_and_persist(
     if pid:
         payload["persisted_run_id"] = pid
 
+    plain = _proposal_plaintext_for_persistence(payload, pipeline_mode=pipeline_mode)
+    if plain.strip():
+        canon_id = insert_canonical_proposal_row(
+            user_id,
+            title=title,
+            body=plain,
+            score=int(payload.get("score") or 0),
+            issues=list(payload.get("issues") or []),
+            job_description=rfp_text[:12_000],
+        )
+        if canon_id:
+            payload["persisted_proposal_id"] = canon_id
+
+    mem_snips: list[tuple[str, str]] = []
+    if pipeline_mode == "freelance" and fp is not None:
+        hook_line = (fp.hook or "").strip().split("\n")[0][:2000]
+        if hook_line:
+            mem_snips.append(("strong_line", hook_line))
+        apx = (fp.approach or "").strip()[:2000]
+        if apx:
+            mem_snips.append(("win_pattern", apx))
+    elif fmt is not None:
+        ex0 = (fmt.executive_summary or "").strip()[:2000]
+        if ex0:
+            mem_snips.append(("strong_line", ex0))
+        tech0 = (fmt.technical_approach or "").strip()[:2000]
+        if tech0:
+            mem_snips.append(("win_pattern", tech0))
+    if mem_snips:
+        insert_proposal_memory_entries(user_id, mem_snips, llm)
+
     if pipeline_mode == "freelance" and fp is not None and ic is not None and ver.score > 75:
         try:
             _maybe_autosave_high_score_win(user_id, fp, ver, ic, llm)
@@ -349,46 +401,15 @@ def _enrich_run_payload_and_persist(
             log.warning("freelance win memory autosave failed: %s", e)
 
 
-def _freelance_fallback_win_rows() -> list[dict[str, Any]]:
-    """Synthetic starter patterns when no indexed freelance wins exist — marked as seeds, not fake client wins."""
-    return [
-        {
-            "id": "_bidforge_synthetic_seed_open",
-            "label": "Synthetic seed: outcome-first opener (not from your wins)",
-            "excerpt": (
-                "Open with the named deliverable from the title, tie one line to a measurable outcome on similar "
-                "builds, then neutralize one risk they hinted (timeline, scope creep, or trust)."
-            ),
-            "outcome": "synthetic_seed",
-            "tags": ["conversion", "starter"],
-            "job_type": "any",
-            "metrics": {},
-        },
-        {
-            "id": "_bidforge_synthetic_seed_structure",
-            "label": "Synthetic seed: scan-friendly structure (not from your wins)",
-            "excerpt": (
-                "Line 1: why you fit THIS post. Line 2: one proof tease (metric or artifact type). "
-                "Line 3: one low-friction ask (question or 15-min call)."
-            ),
-            "outcome": "synthetic_seed",
-            "tags": ["structure", "starter"],
-            "job_type": "any",
-            "metrics": {},
-        },
-    ]
-
-
 def _apply_freelance_cold_start_if_needed(rag: RagContext) -> tuple[RagContext, bool]:
-    """Returns (rag_for_agents, had_real_indexed_freelance_memory)."""
+    """Returns (rag_for_agents, had_real_indexed_freelance_memory). Empty memory does not mutate RAG."""
     had_real = rag.has_usable_freelance_memory()
     if had_real:
         return rag, True
     log.debug(
-        "No indexed win lines for this account — cold-start fallback active (generation continues)",
+        "No indexed freelance win memory for this account — pipeline continues (memory_status=empty)",
     )
-    merged = list(rag.freelance_win_patterns) + _freelance_fallback_win_rows()
-    return rag.model_copy(update={"freelance_win_patterns": merged}), False
+    return rag, False
 
 
 def _resolve_brain(pipeline_mode: str, rfp_text: str, llm: LLMClient) -> tuple[InputClassifierOutput, str]:
@@ -820,6 +841,7 @@ def _run_freelance_steps(
         partial["critique"] = critique.model_dump()
 
     mem_ok = had_real_mem
+    mem_status = "grounded" if had_real_mem else "empty"
     mem_used = _memory_summary_for_ui(rag, pipeline_mode="freelance")
     warn: str | None = None
     if ver.reply_probability_score is not None:
@@ -842,6 +864,7 @@ def _run_freelance_steps(
         ),
         "timeline": [],
         "memory_used": mem_used,
+        "memory_status": mem_status,
         "score": ver.score,
         "issues": _flatten_issues(ver),
         "suggestions": list(ver.suggestions or []),
@@ -1073,6 +1096,7 @@ def execute_proposal_pipeline(
             "proposal": proposal,
             "timeline": timeline_out,
             "memory_used": mem_used,
+            "memory_status": "grounded" if mem_ok else "empty",
             "score": ver.score,
             "issues": _flatten_issues(ver),
             "suggestions": list(ver.suggestions or []),
@@ -1293,6 +1317,7 @@ def execute_proposal_pipeline(
             ),
             "timeline": timeline_out,
             "memory_used": mem_used,
+            "memory_status": "grounded" if mem_ok else "empty",
             "score": ver.score,
             "issues": _flatten_issues(ver),
             "suggestions": list(ver.suggestions or []),

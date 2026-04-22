@@ -38,20 +38,18 @@ async def lifespan(app: FastAPI):
     yield
 
 
-_docs_enabled = settings.env != "production"
-
 app = FastAPI(
     title="BidForge API",
     description=(
         "Proposal intelligence HTTP layer — deterministic multi-agent pipeline, "
         "Langfuse tracing, Clerk JWT auth, Supabase-backed RAG. "
-        "Interactive **Swagger** and **ReDoc** are enabled outside `ENV=production`."
+        "OpenAPI **Swagger** (`/docs`) ships in all environments for integrators."
     ),
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs" if _docs_enabled else None,
-    redoc_url="/redoc" if _docs_enabled else None,
-    openapi_url="/openapi.json" if _docs_enabled else None,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 app.add_middleware(

@@ -18,7 +18,7 @@ Rules:
 - trust_signal: one short clause (stack + domain) without fake company names unless in memory JSON.
 - relevance_match: honest self-rating vs the job.
 - alternative_hooks: exactly 0, 1, or 2 additional opening options (each 1–3 lines) with a different angle (e.g. speed vs proof vs risk removal). Same quality bar as hook.
-- Reuse exact short phrases from FREELANCE_WIN_MEMORY_JSON excerpts when present (adapt to this job); if only synthetic_seed rows exist, adapt their structure/tone, not fake wins.
+- Reuse exact short phrases from FREELANCE_WIN_MEMORY_JSON excerpts when present (adapt to this job). When memory JSON is empty [], write hooks purely from JOB_POST specifics — no invented wins or logos.
 - Never paste long job text back. No placeholders like [Name].
 """
 
