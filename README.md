@@ -50,7 +50,7 @@ Configure environment variables as described in `apps/web/.env.example` and `api
 
 ### Vercel
 
-Use the **repository root** as the Vercel project root (never `apps/api` — that path does not exist). Root `vercel.json` runs `npm install` plus `uv pip install` for `api/requirements.txt`, then `npm run build` (Turbo builds `apps/web`). Enable **Include files outside the root** if your preset scopes the checkout.
+Use the **repository root** as the Vercel project root (never `apps/api` — that path does not exist). Root `vercel.json` runs `npm install`, installs standalone **`uv`** (curl; avoids PEP 668 `pip` blocks on the build image), then **`uv pip install --system --break-system-packages -r api/requirements.txt`**, then `npm run build` (Turbo builds `apps/web`). Enable **Include files outside the root** if your preset scopes the checkout.
 
 ## Monorepo layout
 
