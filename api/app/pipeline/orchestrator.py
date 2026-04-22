@@ -442,21 +442,46 @@ def _resolve_brain(pipeline_mode: str, rfp_text: str, llm: LLMClient) -> tuple[I
 
 
 def _memory_summary_for_ui(rag: RagContext, *, pipeline_mode: str = "enterprise") -> dict[str, Any]:
-    """UI-facing retrieval summary — win patterns only (no document titles or methodology dumps)."""
+    """UI-facing retrieval summary — real rows only; explicit `memory` / `source` when RAG is empty vs grounded."""
     fwp = [
         {"id": w.get("id"), "label": w.get("label"), "outcome": w.get("outcome")}
         for w in rag.freelance_win_patterns[:12]
         if str(w.get("outcome") or "").lower() != "synthetic_seed"
     ]
+    wps = [
+        {"id": w.get("id"), "label": w.get("label"), "outcome": w.get("outcome")}
+        for w in rag.win_patterns[:12]
+    ]
+    if (pipeline_mode or "").lower() == "freelance":
+        grounded = rag.has_usable_freelance_memory()
+        src_ids = [str(w.get("id") or "").strip() for w in fwp if str(w.get("id") or "").strip()]
+    else:
+        grounded = rag.has_usable_memory()
+        src_ids = []
+        for w in wps:
+            sid = str(w.get("id") or "").strip()
+            if sid:
+                src_ids.append(sid)
+        for w in rag.similar_proposals[:12]:
+            if not isinstance(w, dict):
+                continue
+            sid = str(w.get("id") or "").strip()
+            if sid:
+                src_ids.append(sid)
+        for w in rag.methodology_blocks[:12]:
+            if not isinstance(w, dict):
+                continue
+            sid = str(w.get("id") or "").strip()
+            if sid:
+                src_ids.append(sid)
     return {
         "similar_proposals": [],
         "methodology_blocks": [],
-        "win_patterns": [
-            {"id": w.get("id"), "label": w.get("label"), "outcome": w.get("outcome")}
-            for w in rag.win_patterns[:12]
-        ],
+        "win_patterns": wps,
         "freelance_win_patterns": fwp,
         "pipeline_mode": pipeline_mode,
+        "memory": "grounded" if grounded else "empty",
+        "source": src_ids[:32],
     }
 
 

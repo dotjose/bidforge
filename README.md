@@ -50,7 +50,7 @@ Configure environment variables as described in `apps/web/.env.example` and `api
 
 ### Vercel
 
-In the Vercel project, set **Root Directory** to `apps/web`. The repo has no `apps/api` path; FastAPI for serverless lives at the repository root in **`/api`**.
+Use the **repository root** as the Vercel project root (never `apps/api` — that path does not exist). Root `vercel.json` runs `npm install` plus `uv pip install` for `api/requirements.txt`, then `npm run build` (Turbo builds `apps/web`). Enable **Include files outside the root** if your preset scopes the checkout.
 
 ## Monorepo layout
 

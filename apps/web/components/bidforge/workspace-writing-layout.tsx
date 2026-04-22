@@ -5,10 +5,11 @@ import { GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
-const STORAGE_LEFT_PCT = "bf-editor-left-pct";
-const DEFAULT_LEFT_PCT = 38;
-const MIN_LEFT_PCT = 32;
-const MAX_LEFT_PCT = 44;
+/** Focus mode: wide brief column (~60–70%), proposal on the right. */
+const STORAGE_LEFT_PCT = "bf-editor-focus-input-pct";
+const DEFAULT_LEFT_PCT = 64;
+const MIN_LEFT_PCT = 55;
+const MAX_LEFT_PCT = 72;
 
 export type WorkspaceEditorTab = "input" | "proposal";
 

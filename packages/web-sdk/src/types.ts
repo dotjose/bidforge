@@ -42,6 +42,10 @@ export type MemorySummary = {
     outcome?: string | null;
   }>;
   pipeline_mode?: string | null;
+  /** Server: `empty` when no tenant RAG hits; `grounded` when indexed memory was used. */
+  memory?: "empty" | "grounded";
+  /** Stable ids of retrieval rows used for this run (may be empty). */
+  source?: string[];
 };
 
 export type SectionAttribution = {

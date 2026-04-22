@@ -13,10 +13,17 @@ type SavedProposalRunsProps = {
   /** Shown when the API returns an empty list (not loading). */
   emptyTitle: string;
   emptyBody: string;
+  /** When false, omit the large CTA under the empty message. */
+  showEmptyCta?: boolean;
   className?: string;
 };
 
-export function SavedProposalRuns({ emptyTitle, emptyBody, className }: SavedProposalRunsProps) {
+export function SavedProposalRuns({
+  emptyTitle,
+  emptyBody,
+  showEmptyCta = true,
+  className,
+}: SavedProposalRunsProps) {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const [runs, setRuns] = useState<ProposalRunSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,17 +91,23 @@ export function SavedProposalRuns({ emptyTitle, emptyBody, className }: SavedPro
   if (runs.length === 0) {
     return (
       <div className={cn("text-center", className)}>
-        <p className="font-display text-lg font-semibold text-foreground">{emptyTitle}</p>
-        <p className="mx-auto mt-3 max-w-md text-base leading-relaxed text-muted-foreground">{emptyBody}</p>
-        <Link
-          href="/proposal"
-          className={cn(
-            buttonVariants({ size: "lg" }),
-            "mt-8 inline-flex h-12 items-center justify-center rounded-xl px-8 text-[15px] font-semibold",
-          )}
-        >
-          Generate your first proposal
-        </Link>
+        {emptyTitle ? (
+          <p className="font-display text-lg font-semibold text-foreground">{emptyTitle}</p>
+        ) : null}
+        {emptyBody ? (
+          <p className="mx-auto mt-3 max-w-md text-base leading-relaxed text-muted-foreground">{emptyBody}</p>
+        ) : null}
+        {showEmptyCta ? (
+          <Link
+            href="/proposal"
+            className={cn(
+              buttonVariants({ size: "lg" }),
+              "mt-8 inline-flex h-12 items-center justify-center rounded-xl px-8 text-[15px] font-semibold",
+            )}
+          >
+            Open workspace
+          </Link>
+        ) : null}
       </div>
     );
   }

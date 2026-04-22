@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "npm install && pip install -r api/requirements.txt",
+  "installCommand": "npm install && pip install --no-cache-dir uv && uv pip install -r api/requirements.txt",
   "buildCommand": "npm run build",
   "functions": {
     "api/**/*.py": {

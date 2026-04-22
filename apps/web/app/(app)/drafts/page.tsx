@@ -21,8 +21,9 @@ export default function DraftsPage() {
 
       <BfCard className="mt-10 p-6 md:p-8">
         <SavedProposalRuns
-          emptyTitle="No proposals yet"
-          emptyBody="When you generate a proposal, it is saved automatically so you can reopen it here."
+          emptyTitle="No saved runs"
+          emptyBody=""
+          showEmptyCta={false}
           className="text-left"
         />
       </BfCard>

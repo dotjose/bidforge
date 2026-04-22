@@ -70,7 +70,9 @@ export function MemoryUsedPanel({
           Memory
         </p>
         <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
-          No relevant past wins for this proposal yet.
+          {memorySummary?.memory === "empty"
+            ? "No indexed memory matched this run."
+            : "Run a proposal to see retrieval context here."}
         </p>
       </div>
     );
@@ -89,7 +91,9 @@ export function MemoryUsedPanel({
           Memory
         </p>
         <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
-          No relevant past wins for this proposal yet.
+          {memorySummary?.memory === "empty"
+            ? "No indexed memory matched this run."
+            : "No retrieval-backed patterns to list for this run."}
         </p>
       </div>
     );

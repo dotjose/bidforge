@@ -14,7 +14,7 @@ export default function DashboardPage() {
           Dashboard
         </h1>
         <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-          Start proposals, reopen saved runs, and keep quality high before you submit.
+          Open the workspace to run a brief, then reopen saved runs from here.
         </p>
       </header>
 
@@ -70,8 +70,9 @@ export default function DashboardPage() {
         </h2>
         <BfCard className="mt-6 p-6 md:p-8">
           <SavedProposalRuns
-            emptyTitle="No proposals yet"
-            emptyBody="Generate a proposal from the workspace — completed runs appear here automatically."
+            emptyTitle="No saved runs"
+            emptyBody=""
+            showEmptyCta={false}
             className="text-left"
           />
         </BfCard>
