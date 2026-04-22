@@ -6,6 +6,7 @@ import {
   BookmarkPlus,
   Download,
   Loader2,
+  PanelRight,
   Printer,
   Sparkles,
   ThumbsDown,
@@ -498,15 +499,6 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
         <WorkspaceModeToggle size="compact" className="hidden xl:flex" />
         <Button
           type="button"
-          disabled={!canSubmit}
-          onClick={runGenerate}
-          className="h-10 gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-4 text-[14px] font-semibold text-white shadow-sm hover:brightness-110 disabled:opacity-50 md:min-h-11 md:px-5"
-        >
-          {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Sparkles className="size-4" aria-hidden />}
-          Generate
-        </Button>
-        <Button
-          type="button"
           variant="outline"
           className="h-10 min-h-10 rounded-xl px-4 text-[14px] md:min-h-11"
           onClick={onSaveLink}
@@ -556,62 +548,87 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
         if (f) void ingestFile(f);
       }}
     >
-      <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
-        <textarea
-          value={briefDraft}
-          onChange={(e) => {
-            const v = e.target.value;
-            setBriefDraft(v);
-            debouncedSyncBrief(v);
-          }}
-          onBlur={() => setJobDescription(briefDraft)}
-          spellCheck
-          placeholder="Paste the RFP, job post, or buyer notes. Drop a PDF or .txt anywhere in this panel."
-          className="min-h-[500px] w-full flex-1 resize-y border-0 bg-transparent px-1 py-1 text-[17px] leading-[1.65] text-foreground outline-none ring-0 placeholder:text-muted-foreground"
-        />
-        <div className="mt-4 flex flex-col gap-4 border-t border-border/60 pt-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[14px] tabular-nums text-muted-foreground">
-              {briefDraft.length.toLocaleString()} / {rfpMaxChars.toLocaleString()} characters
-            </p>
-            <WorkspaceModeToggle size="compact" className="lg:hidden" />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              className="sr-only"
-              accept=".txt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              onChange={onFileChange}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 min-h-11 gap-2 rounded-xl border-dashed px-5 text-[15px]"
-              disabled={actionBusy}
-              onClick={() => fileRef.current?.click()}
-            >
-              <Upload className="size-4" aria-hidden />
-              Upload PDF / TXT
-            </Button>
-          </div>
-          {errorMsg ? (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-[14px] text-destructive" role="alert">
-              {errorMsg}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-8 md:px-8 md:pb-8 md:pt-10">
+          <textarea
+            value={briefDraft}
+            onChange={(e) => {
+              const v = e.target.value;
+              setBriefDraft(v);
+              debouncedSyncBrief(v);
+            }}
+            onBlur={() => setJobDescription(briefDraft)}
+            spellCheck
+            placeholder="Paste the RFP or job post. You can drop a PDF or .txt here."
+            className="min-h-[600px] h-[70vh] w-full max-w-none resize-y border-0 bg-transparent py-2 text-lg leading-[1.7] text-foreground outline-none ring-0 placeholder:text-muted-foreground md:text-[18px] md:leading-[1.75]"
+          />
+          <div className="mt-8 flex flex-col gap-5 border-t border-border/60 pt-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm tabular-nums text-muted-foreground md:text-[15px]">
+                {briefDraft.length.toLocaleString()} / {rfpMaxChars.toLocaleString()} characters
+              </p>
+              <WorkspaceModeToggle size="compact" className="md:hidden" />
             </div>
-          ) : null}
-          {actionMsg ? (
-            <p className="text-[14px] text-muted-foreground" role="status">
-              {actionMsg}
-            </p>
-          ) : null}
+            <div className="flex flex-wrap gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                className="sr-only"
+                accept=".txt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={onFileChange}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-h-11 gap-2 rounded-xl border-dashed px-5 text-[15px]"
+                disabled={actionBusy}
+                onClick={() => fileRef.current?.click()}
+              >
+                <Upload className="size-4" aria-hidden />
+                Upload PDF / TXT
+              </Button>
+            </div>
+            {errorMsg ? (
+              <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-[14px] text-destructive" role="alert">
+                {errorMsg}
+              </div>
+            ) : null}
+            {actionMsg ? (
+              <p className="text-[14px] text-muted-foreground md:text-[15px]" role="status">
+                {actionMsg}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <div className="shrink-0 border-t border-border bg-background/95 px-6 py-4 backdrop-blur-md supports-[backdrop-filter]:bg-background/90 md:px-8">
+          <Button
+            type="button"
+            disabled={!canSubmit}
+            onClick={runGenerate}
+            className="h-12 w-full gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 text-[15px] font-semibold text-white shadow-sm hover:brightness-110 disabled:opacity-50 md:h-12 md:text-[16px]"
+          >
+            {loading ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <Sparkles className="size-5" aria-hidden />}
+            Generate
+          </Button>
         </div>
       </div>
     </div>
   );
 
   const outputPanel = (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col">
+      <div className="absolute right-3 top-3 z-20 md:right-4 md:top-4">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-10 gap-2 rounded-xl border-border/80 bg-background/95 px-4 text-[14px] shadow-sm backdrop-blur"
+          onClick={() => setDrawerOpen(true)}
+        >
+          <PanelRight className="size-4" aria-hidden />
+          Context
+        </Button>
+      </div>
       {runDegraded || runWarnings.length > 0 ? (
         <div
           className="shrink-0 border-b border-amber-500/25 bg-amber-500/10 px-5 py-3 text-[14px] text-amber-950 dark:text-amber-50"
@@ -630,7 +647,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="w-full px-5 pb-32 pt-8 md:px-8 md:pb-40 md:pt-12 lg:px-6 lg:pb-40 lg:pt-10">
+        <div className="mx-auto w-full max-w-[900px] px-5 pb-28 pt-14 md:px-8 md:pb-40 md:pt-16">
           {isFreelanceRun ? (
             <div className="mb-10 space-y-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-6 dark:bg-violet-500/10">
               {replyLikelihood0_100 != null ? (
@@ -655,13 +672,6 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
                 rows={5}
                 className="w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-[16px] leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
-            </div>
-          ) : null}
-          {!readerMarkdown.trim() && !loading ? (
-            <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 text-center">
-              <p className="max-w-md text-[17px] leading-relaxed text-muted-foreground">
-                Paste a brief to generate your first proposal.
-              </p>
             </div>
           ) : null}
           {readerMarkdown.trim() ? (
@@ -804,7 +814,6 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
           variant={isFreelanceRun ? "freelance" : "enterprise"}
         />
       ) : null}
-      <p className="text-[13px] leading-relaxed text-muted-foreground">Line-by-line diff is coming soon.</p>
     </div>
   );
 
@@ -815,7 +824,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
           type="button"
           disabled={!canSubmit}
           onClick={runGenerate}
-          className="h-11 min-h-11 gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-5 text-[15px] font-semibold text-white shadow-sm hover:brightness-110 disabled:opacity-50"
+          className="h-11 min-h-11 gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-5 text-[15px] font-semibold text-white shadow-sm hover:brightness-110 disabled:opacity-50 md:hidden"
         >
           {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Sparkles className="size-4" aria-hidden />}
           Generate

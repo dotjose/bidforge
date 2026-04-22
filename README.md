@@ -42,16 +42,20 @@ Open http://localhost:3000, sign in, and use **New proposal** from the sidebar.
 ### API (optional, for full generation)
 
 ```bash
-cp apps/api/.env.example apps/api/.env
-cd apps/api && uv sync && uv run uvicorn app.main:app --reload --port 8000
+cp api/.env.example api/.env
+cd api && uv sync && uv run uvicorn app.main:app --reload --port 8000
 ```
 
-Configure environment variables as described in `apps/web/.env.example` and `apps/api/.env.example`.
+Configure environment variables as described in `apps/web/.env.example` and `api/.env.example`.
+
+### Vercel
+
+In the Vercel project, set **Root Directory** to `apps/web`. The repo has no `apps/api` path; FastAPI for serverless lives at the repository root in **`/api`**.
 
 ## Monorepo layout
 
 - `apps/web` — Next.js product UI
-- `apps/api` — Backend service for proposal generation
+- `api/` — FastAPI service (Python serverless + local `uvicorn`)
 - `packages/web-sdk` — Typed client used by the browser
 - `packages/agents`, `packages/prompts`, `packages/schemas`, `packages/shared` — Server-side generation assets
 - `infra/` — Database and observability configuration for operators

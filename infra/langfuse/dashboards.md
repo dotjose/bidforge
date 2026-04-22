@@ -1,6 +1,6 @@
 # Langfuse dashboards (BidForge)
 
-BidForge emits **trace-level metadata** and **numeric scores** from `apps/api` (see `app/pipeline/orchestrator.py`). Use these definitions in the Langfuse UI (Dashboards / Metrics) so monitoring stays actionable rather than raw log browsing.
+BidForge emits **trace-level metadata** and **numeric scores** from the `api/` service (see `api/app/pipeline/orchestrator.py`). Use these definitions in the Langfuse UI (Dashboards / Metrics) so monitoring stays actionable rather than raw log browsing.
 
 ## Shared filters
 
