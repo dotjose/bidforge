@@ -2,6 +2,9 @@
   "name": "bidforge",
   "private": true,
   "packageManager": "npm@11.5.2",
+  "engines": {
+    "node": "22.x"
+  },
   "workspaces": ["apps/*", "packages/*"],
   "dependencies": {
     "next": "15.5.15",
