@@ -18,6 +18,7 @@ from app.integrations.postgrest_errors import (
 )
 from app.integrations.supabase import get_supabase_client
 from app.integrations.supabase_tables import (
+    T_DOCUMENTS,
     T_FREELANCE_WIN_MEMORY,
     T_LEGACY_CANONICAL_PROPOSALS,
     T_MEMORY_USAGE_LOG,
@@ -178,6 +179,34 @@ def fetch_freelance_win_memory_rows(clerk_user_id: str, *, limit: int = 3) -> li
     return [r for r in rows if isinstance(r, dict)]
 
 
+def fetch_user_saved_pattern_document_rows(clerk_user_id: str, *, limit: int = 24) -> list[dict[str, Any]]:
+    """Rows from ``documents`` written by ``POST /documents/memory/pattern`` (internal user uuid)."""
+    uid = resolve_users_uuid_for_clerk(clerk_user_id)
+    if uid is None:
+        return []
+    sb = get_supabase_client()
+    if sb is None:
+        return []
+    try:
+        res = (
+            sb.table(T_DOCUMENTS)
+            .select("id,content,metadata,created_at")
+            .eq("user_id", str(uid))
+            .eq("source", "user_pattern")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        if is_missing_relation_error(e):
+            _log_store_error("documents user_pattern select", T_DOCUMENTS, e)
+        else:
+            log.debug("documents user_pattern select failed: %s", e)
+        return []
+    rows = getattr(res, "data", None) or []
+    return [r for r in rows if isinstance(r, dict)]
+
+
 def fetch_top_freelance_wins_for_diff(clerk_user_id: str, *, limit: int = 3) -> list[dict[str, Any]]:
     return fetch_freelance_win_memory_rows(clerk_user_id, limit=limit)
 
@@ -257,10 +286,12 @@ def _proposals_row_to_api_run(row: dict[str, Any]) -> dict[str, Any]:
         ps = dict(out_po.get("pipeline_state") or {})
         ps["selected_pattern"] = row["pattern"]
         out_po["pipeline_state"] = ps
+    src = str(row.get("input_text") or row.get("rfp_text") or "").strip()
     return {
         "id": str(row.get("id") or ""),
         "user_id": str(row.get("user_id") or ""),
-        "rfp_input": str(row.get("rfp_text") or ""),
+        "rfp_input": src,
+        "input_type": str(row.get("input_type") or ""),
         "proposal_output": out_po,
         "score": int(row.get("score") or 0),
         "issues": row.get("issues") if isinstance(row.get("issues"), list) else [],
@@ -281,19 +312,27 @@ def insert_proposal_run(
     title: str,
     trace_id: str,
     pipeline_mode: str,
+    input_type: str | None = None,
 ) -> str | None:
     sb = get_supabase_client()
     if sb is None or not clerk_user_id:
         log.warning("insert_proposal_run: missing Supabase client or user_id")
+        return None
+    raw_in = (rfp_input or "").strip()
+    if not raw_in:
+        log.warning("insert_proposal_run: refusing insert — empty source input (input_text/rfp)")
         return None
     po = dict(proposal_output or {})
     ps = dict(po.get("pipeline_state") or {}) if isinstance(po.get("pipeline_state"), dict) else {}
     pat = _pattern_from_proposal_output(po)
     ss = dict(po.get("settings_snapshot") or {}) if isinstance(po.get("settings_snapshot"), dict) else {}
     now = datetime.now(timezone.utc).isoformat()
+    it = (input_type or "").strip()[:128] if input_type else ""
     row: dict[str, Any] = {
         "user_id": _effective_user_id_for_row(clerk_user_id),
-        "rfp_text": rfp_input[:120_000],
+        "rfp_text": raw_in[:120_000],
+        "input_text": raw_in[:120_000],
+        "input_type": it or None,
         "proposal_content": po,
         "pipeline_state": ps,
         "settings_snapshot": ss,
@@ -317,7 +356,7 @@ def insert_proposal_run(
             sid = str(raw_id)
             _insert_proposal_run_audit_row(
                 proposal_row_id=sid,
-                rfp_input=rfp_input,
+                rfp_input=raw_in,
                 proposal_output=po,
             )
             return sid
@@ -343,7 +382,7 @@ def insert_proposal_run(
                 )
                 _insert_proposal_run_audit_row(
                     proposal_row_id=sid,
-                    rfp_input=rfp_input,
+                    rfp_input=raw_in,
                     proposal_output=po,
                 )
                 return sid

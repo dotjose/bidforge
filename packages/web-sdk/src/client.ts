@@ -90,6 +90,8 @@ export class BidForgeClient {
    */
   async runProposal(input: {
     rfp: string;
+    /** When true with continuationRunId, server loads persisted brief from that run (omit rfp body). */
+    useStoredInput?: boolean;
     rfpId?: string;
     /** auto | enterprise | freelance — matches API `pipeline_mode`. */
     pipelineMode?: "auto" | "enterprise" | "freelance";
@@ -107,6 +109,7 @@ export class BidForgeClient {
       pipeline_mode: input.pipelineMode ?? "auto",
       draft_intensity: input.draftIntensity ?? "balanced",
     };
+    if (input.useStoredInput) body.use_stored_input = true;
     if (input.workspace) body.workspace = input.workspace;
     if (input.continuationRunId?.trim()) body.continuation_run_id = input.continuationRunId.trim();
     if (input.learningSnippet?.trim()) body.learning_snippet = input.learningSnippet.trim();

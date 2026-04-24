@@ -13,6 +13,24 @@ from app.contracts.errors import error_response
 from app.core.config import settings
 
 
+def _rate_limit_exempt(request: Request) -> bool:
+    """Do not count cheap read-only paths — the SPA hydrates them often (HMR, tabs, strict 30/min)."""
+    if request.method != "GET":
+        return False
+    path = request.url.path
+    if path == "/api/version":
+        return True
+    if path in ("/api/proposals", "/api/settings", "/api/workspace/settings"):
+        return True
+    if path == "/api/proposal/runs" or path.startswith("/api/proposal/runs/"):
+        return True
+    if path == "/api/proposal/memory/patterns":
+        return True
+    if path in ("/openapi.json", "/redoc") or path.startswith("/docs"):
+        return True
+    return False
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: object) -> None:
         super().__init__(app)
@@ -22,6 +40,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         limit = settings.rate_limit_per_minute
         if limit <= 0:
+            return await call_next(request)
+        if _rate_limit_exempt(request):
             return await call_next(request)
         client = request.client
         ip = client.host if client else "unknown"

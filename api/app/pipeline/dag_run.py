@@ -118,6 +118,8 @@ class DagRun:
         self.llm = llm
         self.node_prompt_versions = dict(node_prompt_versions or default_node_prompt_versions())
         self._parent_node_id: str = ""
+        self.source_rfp_plain: str = ""
+        self.source_input_type: str = ""
         self._events_ok: bool = True
         self._fail_fast_events = bool(fail_fast_events)
         self._node_outputs: dict[str, Any] = {}
@@ -281,6 +283,8 @@ class DagRun:
             "proposal_id": str(proposal_id),
             "pipeline_mode": pipeline_mode,
             "nodes": dict(self._node_outputs),
+            "source_input_text": (self.source_rfp_plain or "")[:120_000],
+            "input_type": (self.source_input_type or "")[:128],
             "version": PIPELINE_VERSION,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "model": "openrouter",

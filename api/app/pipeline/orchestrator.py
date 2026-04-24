@@ -458,6 +458,7 @@ def _enrich_run_payload_and_persist(
         title=title,
         trace_id=trace,
         pipeline_mode=pipeline_mode,
+        input_type=str(icx.input_type or "")[:128],
     )
     if not pid and (
         settings.persistence_strict_enforced()
@@ -1161,6 +1162,8 @@ def execute_proposal_pipeline(
         fail_fast_events=settings.persistence_strict_enforced(),
     )
     ic, resolved = _resolve_brain(pipeline_mode, rfp_core, client_llm, dag=dag)
+    dag.source_rfp_plain = rfp_core
+    dag.source_input_type = str(ic.input_type) if ic else ""
     hist_prior = [str(x).strip() for x in (prior_run_ids or []) if str(x).strip()]
 
     if resolved == "freelance":

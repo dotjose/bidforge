@@ -86,6 +86,7 @@ def test_insert_proposal_run_writes_proposals_table_and_returns_id() -> None:
     row = ins.call_args[0][0]
     assert row["user_id"] == "user_clerk_1"
     assert row["rfp_text"] == "RFP body"
+    assert row["input_text"] == "RFP body"
     assert row["pattern"] == "strong"
     assert row["proposal_content"]["pipeline_state"]["selected_pattern"] == "strong"
 
@@ -109,6 +110,29 @@ def test_insert_proposal_run_returns_none_without_client() -> None:
             )
             is None
         )
+
+
+def test_insert_proposal_run_refuses_empty_source_input() -> None:
+    from app.integrations import proposal_store
+
+    mock_sb = MagicMock()
+    with patch.object(proposal_store, "get_supabase_client", return_value=mock_sb):
+        from app.integrations.proposal_store import insert_proposal_run
+
+        assert (
+            insert_proposal_run(
+                "u",
+                rfp_input="   ",
+                proposal_output={},
+                score=0,
+                issues=[],
+                title="",
+                trace_id="t",
+                pipeline_mode="e",
+            )
+            is None
+        )
+    mock_sb.table.assert_not_called()
 
 
 def test_insert_proposal_run_returns_none_on_empty_response() -> None:
@@ -163,6 +187,59 @@ def test_get_proposal_run_maps_row_to_api_shape() -> None:
     ps = out["proposal_output"]["pipeline_state"]
     assert ps["selected_pattern"] == "weak"
     assert ps["draft_version"] == 2
+
+
+def test_get_proposal_run_prefers_input_text_over_rfp_text() -> None:
+    from app.integrations import proposal_store
+
+    rid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    db_row = {
+        "id": rid,
+        "user_id": "user_clerk_1",
+        "rfp_text": "stale",
+        "input_text": "canonical brief",
+        "input_type": "job_post",
+        "proposal_content": {"proposal": {"sections": {}}},
+        "pipeline_state": {},
+        "settings_snapshot": {},
+        "pattern": "saved",
+        "title": "T",
+        "score": 1,
+        "issues": [],
+        "trace_id": "tr",
+        "pipeline_mode": "enterprise",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    mock_sb = MagicMock()
+    t = MagicMock()
+    t.select.return_value = _select_eq_eq_limit_execute([db_row])
+    mock_sb.table.return_value = t
+
+    with patch.object(proposal_store, "get_supabase_client", return_value=mock_sb):
+        from app.integrations.proposal_store import get_proposal_run
+
+        out = get_proposal_run("user_clerk_1", rid)
+
+    assert out is not None
+    assert out["rfp_input"] == "canonical brief"
+    assert out["input_type"] == "job_post"
+
+
+def test_build_public_from_stored_preserves_rfp_input() -> None:
+    from app.contracts.proposal_public import build_public_from_stored_proposal_output
+
+    po = {"proposal": {"sections": {}}, "pipeline_mode": "enterprise"}
+    pub = build_public_from_stored_proposal_output(
+        po,
+        row_title="T",
+        row_score=50,
+        row_issues=[],
+        row_id="rid",
+        rfp_input="  original brief  ",
+        input_type="rfp",
+    )
+    assert pub.rfp_input == "original brief"
+    assert pub.input_type == "rfp"
 
 
 def test_list_proposal_runs_queries_proposals() -> None:

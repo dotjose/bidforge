@@ -34,7 +34,11 @@ class ProposalPublicRunResponse(BaseModel):
 class ProposalSavedRunPublic(ProposalPublicRunResponse):
     """GET /api/proposal/runs/{id} — public proposal + RFP echo + workspace mode (not evaluation data)."""
 
-    rfp_input: str = Field(default="", description="Original brief text for the left panel.")
+    rfp_input: str = Field(default="", description="Original brief text for the left panel (persisted source input).")
+    input_type: str = Field(
+        default="",
+        description="Classifier input_type for this run (e.g. rfp, job_post) when stored.",
+    )
     pipeline_mode: Literal["enterprise", "freelance"] = Field(
         default="enterprise",
         description="Which brain path produced the stored run (for UI defaults only).",
@@ -297,6 +301,7 @@ def build_public_from_stored_proposal_output(
     row_issues: list[Any],
     row_id: str,
     rfp_input: str,
+    input_type: str = "",
     row_pipeline_mode: str | None = None,
 ) -> ProposalSavedRunPublic:
     """Rebuild public contract from DB `proposal_content` blob (may contain internal pipeline fields)."""
@@ -323,7 +328,8 @@ def build_public_from_stored_proposal_output(
     )
     return ProposalSavedRunPublic(
         **pub.model_dump(),
-        rfp_input="",
+        rfp_input=(rfp_input or "").strip(),
+        input_type=(input_type or "").strip()[:128],
         pipeline_mode=pm_lit,
     )
 

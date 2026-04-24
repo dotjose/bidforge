@@ -16,6 +16,7 @@ from app.integrations.postgrest_errors import (
     is_missing_relation_error,
     missing_relation_log_suffix,
 )
+from app.integrations.proposal_store import fetch_user_saved_pattern_document_rows
 from app.integrations.supabase import get_supabase_client
 from app.integrations.supabase_tables import T_USERS, fq
 
@@ -216,7 +217,8 @@ def retrieve_rag_context(
         emb = client.embed_text(embed_input)
     except Exception as e:  # noqa: BLE001
         log.warning("embedding failed (RAG empty): %s", e)
-        return RagContext()
+        rows_fb = fetch_user_saved_pattern_document_rows(clerk_user_id, limit=max(effective_match, 8))
+        return _rows_to_context(rows_fb, memory_scope=scope) if rows_fb else RagContext()
 
     rows: list[dict[str, Any]] = []
     for rpc in ("match_proposal_memory", "match_documents"):
@@ -227,5 +229,8 @@ def retrieve_rag_context(
         except Exception as e:  # noqa: BLE001
             log.debug("rpc %s failed: %s", rpc, e)
             continue
+
+    if not rows:
+        rows = fetch_user_saved_pattern_document_rows(clerk_user_id, limit=max(effective_match, 8))
 
     return _rows_to_context(rows, memory_scope=scope)

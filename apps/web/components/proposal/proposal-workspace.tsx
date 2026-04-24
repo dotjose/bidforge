@@ -67,6 +67,9 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   const pendingLearningRef = useRef<string | null>(null);
   /** RFP text that last completed run / hydration used — when `briefDraft` diverges, titles must not stay on the old job. */
   const lastCommittedBriefRef = useRef<string | null>(null);
+  const prevEffectiveRunIdRef = useRef<string | null>(null);
+  /** After explicit "New" (`/proposal` with no `run`), skip auto `?run=` redirect once. */
+  const skipLatestRunHydrateOnceRef = useRef(false);
   const latestRunHydratedRef = useRef(false);
   const [briefDraft, setBriefDraft] = useState("");
   /** Mirrors textarea — avoids auto `?run=` hydration overwriting in-progress typing before debounce lands in the store. */
@@ -96,8 +99,9 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   const setBrainMode = useProposalStore((s) => s.setBrainMode);
   const setProposalTitle = useProposalStore((s) => s.setProposalTitle);
   const setResult = useProposalStore((s) => s.setResult);
+  const resetDraftStore = useProposalStore((s) => s.reset);
 
-  const { state, runDebounced, runNow, rfpMaxChars, isAuthReady, isSignedIn, apiClient } =
+  const { state, runDebounced, runNow, reset: resetRunState, rfpMaxChars, isAuthReady, isSignedIn, apiClient } =
     useProposalRun();
 
   const postPatternIfPersisted = useCallback(
@@ -149,6 +153,26 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     debouncedRetitleOnBriefDrift();
   }, [briefDraft, generated, debouncedRetitleOnBriefDrift]);
 
+  /** Leaving `?run=` for a blank workspace — drop prior run from client so "new proposal" is not a stale cache. */
+  useEffect(() => {
+    const cur = effectiveRunId;
+    const prev = prevEffectiveRunIdRef.current;
+    prevEffectiveRunIdRef.current = cur;
+    if (prev && !cur) {
+      resetRunState();
+      resetDraftStore();
+      setBriefDraft("");
+      setTitleDraft("");
+      setPatternOpen(false);
+      setActionMsg(null);
+      setRightTab("proposal");
+      lastCommittedBriefRef.current = null;
+      pendingLearningRef.current = null;
+      latestRunHydratedRef.current = false;
+      skipLatestRunHydrateOnceRef.current = true;
+    }
+  }, [effectiveRunId, resetDraftStore, resetRunState]);
+
   useEffect(() => {
     const t = (proposalTitle ?? "").trim();
     if (t) setTitleDraft(t);
@@ -178,6 +202,11 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     if (!isAuthReady || !isSignedIn) return;
     if (effectiveRunId) return;
     if (latestRunHydratedRef.current) return;
+    if (skipLatestRunHydrateOnceRef.current) {
+      skipLatestRunHydrateOnceRef.current = false;
+      latestRunHydratedRef.current = true;
+      return;
+    }
     // Do not append `?run=` while the user is already typing — debounced store sync can lag behind the textarea.
     if (briefDraftRef.current.trim().length > 0) {
       latestRunHydratedRef.current = true;
@@ -416,6 +445,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
       toast.success("Pattern saved to memory", {
         description: "Your next generation can use this as a cue.",
       });
+      setMemoryPatterns(null);
       setActionMsg(null);
       setPatternOpen(false);
     } catch (e) {
@@ -426,7 +456,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     } finally {
       setActionBusy(false);
     }
-  }, [apiClient, brainMode, patternBody, patternTags, patternTitle]);
+  }, [apiClient, brainMode, patternBody, patternTags, patternTitle, setMemoryPatterns]);
 
   const briefDrifted =
     lastCommittedBriefRef.current !== null && briefDraft.trim() !== lastCommittedBriefRef.current;
@@ -606,15 +636,20 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
 
   const workspaceHeader = (
     <div className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2 lg:gap-4 lg:px-6">
-      <Link
-        href="/dashboard"
-        className="hidden shrink-0 items-center gap-2.5 rounded-xl pr-2 lg:flex"
-      >
-        <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 text-xs font-bold text-white shadow-md shadow-blue-500/25">
-          BF
-        </span>
-        <span className="font-display text-[15px] font-semibold tracking-[-0.02em]">BidForge</span>
-      </Link>
+      <div className="hidden shrink-0 items-center gap-3 lg:flex">
+        <Link href="/dashboard" className="flex items-center gap-2.5 rounded-xl pr-1">
+          <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 text-xs font-bold text-white shadow-md shadow-blue-500/25">
+            BF
+          </span>
+          <span className="font-display text-[15px] font-semibold tracking-[-0.02em]">BidForge</span>
+        </Link>
+        <Link
+          href="/proposal"
+          className="text-[13px] font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        >
+          New
+        </Link>
+      </div>
       <div className="flex min-w-0 flex-1 justify-center px-1 lg:px-4">
         <input
           value={titleDraft}

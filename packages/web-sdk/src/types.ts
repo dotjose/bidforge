@@ -209,6 +209,7 @@ export type ProposalPublicRunResponse = {
 /** GET /api/proposal/runs/{id} — public run + brief echo + mode for the editor (no internals). */
 export type ProposalSavedRunPublic = ProposalPublicRunResponse & {
   rfp_input: string;
+  input_type?: string;
   pipeline_mode: "enterprise" | "freelance";
 };
 

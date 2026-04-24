@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.modules.proposal.pdf_export import build_proposal_pdf_bytes
 from app.integrations.proposal_store import (
     fetch_freelance_win_memory_rows,
+    fetch_user_saved_pattern_document_rows,
     get_proposal_run,
     list_proposal_runs,
     merge_proposal_run_output_metadata,
@@ -135,11 +136,15 @@ class ProposalRunRequest(BaseModel):
         description="auto: classify input; enterprise: RFP brain; freelance: job-post proposal path.",
     )
     rfp: str = Field(
-        ...,
-        min_length=1,
+        default="",
         max_length=120_000,
         alias="job_description",
-        description="Primary RFP or job description body.",
+        description="Primary RFP or job description body. May be empty when useStoredInput loads from continuationRunId.",
+    )
+    use_stored_input: bool = Field(
+        default=False,
+        alias="useStoredInput",
+        description="When true with continuationRunId, load persisted source input from that run (regenerate without re-pasting).",
     )
     workspace: ProposalWorkspaceInput | None = Field(
         default=None,
@@ -172,7 +177,39 @@ class ProposalRunRequest(BaseModel):
     def _enforce_rfp_size(self) -> ProposalRunRequest:
         if len(self.rfp) > settings.rfp_max_chars:
             raise ValueError(f"RFP exceeds maximum length ({settings.rfp_max_chars} characters)")
+        has_body = bool(self.rfp.strip())
+        if not has_body:
+            if not self.use_stored_input:
+                raise ValueError("rfp (job description) is required unless useStoredInput is true")
+            if not (self.continuation_run_id or "").strip():
+                raise ValueError("continuationRunId is required when useStoredInput is true")
         return self
+
+
+def _resolved_rfp_text_for_run(user_id: str, body: ProposalRunRequest) -> str:
+    """Source-of-truth brief: request body, or persisted source columns when regenerating from a saved run."""
+    if body.use_stored_input:
+        cid = (body.continuation_run_id or "").strip()
+        prev = get_proposal_run(user_id, cid)
+        if not prev:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_response(
+                    code="NOT_FOUND",
+                    message="continuationRunId does not reference a saved proposal for this user.",
+                ),
+            )
+        stored = (prev.get("rfp_input") or "").strip()
+        if not stored:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_response(
+                    code="INPUT_TEXT_MISSING",
+                    message="Saved run has no persisted source input — cannot regenerate without re-pasting the brief.",
+                ),
+            )
+        return stored[: settings.rfp_max_chars]
+    return body.rfp.strip()[: settings.rfp_max_chars]
 
 
 class MemoryPatternItemOut(BaseModel):
@@ -524,6 +561,14 @@ async def get_saved_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=error_response(code="NOT_FOUND", message="Proposal run not found."),
         )
+    if not str(row.get("rfp_input") or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_response(
+                code="INPUT_TEXT_MISSING",
+                message="This saved run has no persisted source input; open a new proposal and paste the brief again.",
+            ),
+        )
     po = row.get("proposal_output")
     if not isinstance(po, dict):
         po = {}
@@ -540,6 +585,7 @@ async def get_saved_run(
         row_issues=issues_list,
         row_id=str(row.get("id") or ""),
         rfp_input=str(row.get("rfp_input") or ""),
+        input_type=str(row.get("input_type") or ""),
         row_pipeline_mode=str(row.get("pipeline_mode") or ""),
     )
 
@@ -552,17 +598,43 @@ async def get_saved_run(
 async def list_memory_patterns(
     user: Annotated[CurrentUser, Depends(get_current_user)],
 ) -> list[MemoryPatternItemOut]:
-    rows = fetch_freelance_win_memory_rows(user.user_id, limit=16)
+    """Merge autosaved freelance wins (``freelance_win_memory``) with Save-as-pattern rows (``documents``)."""
     out: list[MemoryPatternItemOut] = []
-    for r in rows:
+    seen: set[str] = set()
+
+    def _add(label: str, outcome: str) -> None:
+        lab = (label or "").strip()
+        if len(lab) < 4:
+            return
+        key = lab[:160].casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(MemoryPatternItemOut(label=lab[:200] + ("…" if len(lab) > 200 else ""), outcome=outcome))
+
+    for r in fetch_freelance_win_memory_rows(user.user_id, limit=16):
         if not isinstance(r, dict):
             continue
         hook = str(r.get("opening_hook") or "").strip()
         if not hook:
             continue
         jt = str(r.get("job_type") or "pattern")
-        out.append(MemoryPatternItemOut(label=hook[:200] + ("…" if len(hook) > 200 else ""), outcome=jt))
-    return out
+        _add(hook, jt)
+
+    for r in fetch_user_saved_pattern_document_rows(user.user_id, limit=24):
+        if not isinstance(r, dict):
+            continue
+        meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+        title = str(meta.get("title") or "Saved pattern").strip()
+        body = str(r.get("content") or "").strip()
+        head = body.replace("\n", " ")
+        if len(head) > 160:
+            head = head[:160].rstrip() + "…"
+        label = f"{title} — {head}".strip(" —") if head else title
+        kind = str(meta.get("type") or "saved_pattern")
+        _add(label, kind)
+
+    return out[:32]
 
 
 @router.post(
