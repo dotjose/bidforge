@@ -15,6 +15,22 @@ export type ApiErrorEnvelope = {
 };
 
 export type ProposalSections = {
+  opening?: string;
+  understanding?: string;
+  solution?: string;
+  execution_plan?: string;
+  timeline?: string;
+  deliverables?: string;
+  experience?: string;
+  risks?: string;
+  next_step?: string;
+  hook?: string;
+  what_ill_deliver?: string;
+  timeline_block?: string;
+  deliverables_block?: string;
+  relevant_experience?: string;
+  risk_reduction?: string;
+  call_to_action?: string;
   executive_summary: string;
   technical_approach: string;
   delivery_plan: string;
@@ -42,8 +58,8 @@ export type MemorySummary = {
     outcome?: string | null;
   }>;
   pipeline_mode?: string | null;
-  /** Server: `empty` when no tenant RAG hits; `grounded` when indexed memory was used. */
-  memory?: "empty" | "grounded";
+  /** Server: `grounded` when indexed memory was used; `general` otherwise (legacy `empty` tolerated). */
+  memory?: "empty" | "grounded" | "general";
   /** Stable ids of retrieval rows used for this run (may be empty). */
   source?: string[];
 };
@@ -64,22 +80,26 @@ export type ProposalPayload = {
   section_attributions?: SectionAttribution[];
   pipeline_mode?: "enterprise" | "freelance";
   freelance?: {
+    opening?: string;
+    understanding?: string;
+    solution?: string;
+    experience?: string;
+    next_step?: string;
+    risks?: string;
+    execution_tasks?: string[];
+    timeline?: string[];
+    deliverables?: string[];
     hook?: string;
     understanding_need?: string;
     approach?: string;
     relevant_experience?: string;
     call_to_action?: string;
-    /** Legacy keys — still populated for PDF/export compatibility */
-    opening?: string;
+    risks_mitigation?: string;
+    timeline_weeks?: string[];
+    deliverables_list?: string[];
     body?: string;
     proof?: string;
     closing?: string;
-  };
-  hook?: {
-    hook: string;
-    trust_signal: string;
-    relevance_match: string;
-    alternative_hooks?: string[];
   };
 };
 
@@ -132,6 +152,8 @@ export type WorkspaceSettingsResponse = {
   company_profile: Record<string, unknown>;
   tone: string;
   writing_style: string;
+  /** OpenRouter chat model id when set in user_settings (e.g. anthropic/claude-3.5-sonnet). */
+  openrouter_model_primary: string;
   rag_config: WorkspaceRagConfig;
   proposal_mode: "auto" | "enterprise" | "freelance";
   updated_at: string | null;
@@ -141,6 +163,7 @@ export type WorkspaceSettingsUpdate = {
   company_profile?: Record<string, unknown>;
   tone?: string;
   writing_style?: string;
+  openrouter_model_primary?: string | null;
   rag_config?: WorkspaceRagConfig;
   proposal_mode?: "auto" | "enterprise" | "freelance";
 };
@@ -149,6 +172,7 @@ export type WorkspaceSettingsUpdate = {
 export type ProposalWorkspaceInput = {
   tone?: string;
   writing_style?: string;
+  openrouterModelPrimary?: string;
   proposal_mode?: "auto" | "enterprise" | "freelance";
   rag?: {
     enabled?: boolean;
@@ -160,53 +184,37 @@ export type ProposalWorkspaceInput = {
 
 export type WorkspaceStateEcho = Record<string, unknown>;
 
-export type ProposalRunResponse = {
-  proposal: ProposalPayload;
+/** Sanitized POST /api/proposal/run — public proposal payload only (no DAG internals, RAG dumps, or critique). */
+export type ProposalSectionPublic = {
+  title: string;
+  content: string;
+};
+
+export type CrossProposalDiffPublic = {
+  delta_score: number;
+  improvements: string[];
+};
+
+export type ProposalPublicRunResponse = {
+  proposal_id: string;
+  title: string;
+  executive_summary: string;
+  sections: ProposalSectionPublic[];
   score: number;
   issues: string[];
-  /** Verifier remediation hints; separate from proposal body. */
-  suggestions?: string[];
-  /** @deprecated Prefer `run_id` — same value, kept for older clients. */
-  trace_id: string;
-  run_id: string;
-  memory_grounded: boolean;
-  /** Indexed win / case memory used for grounding; `empty` when none. */
-  memory_status?: "empty" | "grounded";
-  grounding_warning?: string | null;
-  timeline: TimelinePhase[];
-  memory_used: MemorySummary;
-  status: "success" | "degraded";
-  insights: ProposalRunInsights;
-  pipeline_metadata: {
-    pipeline_timeout_s?: number;
-    per_agent_timeout_s?: number;
-    rfp_max_chars?: number;
-  };
+  memory_used: boolean;
+  cross_proposal_diff: CrossProposalDiffPublic;
+};
+
+/** GET /api/proposal/runs/{id} — public run + brief echo + mode for the editor (no internals). */
+export type ProposalSavedRunPublic = ProposalPublicRunResponse & {
+  rfp_input: string;
   pipeline_mode: "enterprise" | "freelance";
-  input_classification?: Record<string, unknown> | null;
-  job_understanding?: Record<string, unknown> | null;
-  hook?: {
-    hook: string;
-    trust_signal: string;
-    relevance_match: string;
-    alternative_hooks?: string[];
-  } | null;
-  critique?: {
-    improvements: string[];
-    reply_probability_delta?: string;
-    enterprise_gap_summary?: string;
-    /** Freelance: optional full bid in top-1% reply style */
-    top1_style_rewrite?: string;
-  } | null;
-  verifier_metrics?: Record<string, unknown> | null;
-  reply_likelihood_0_100?: number | null;
-  /** Job-specific title from the API (never a product placeholder). */
-  title: string;
-  cross_proposal_diff?: CrossProposalDiffPayload | null;
-  /** DB row id in `proposal_runs` when the server persisted this run. */
-  persisted_run_id?: string | null;
-  /** Canonical workspace echo (rfp slice, settings, memory scratch, trace). */
-  workspace_state?: WorkspaceStateEcho;
+};
+
+export type MemoryPatternItem = {
+  label: string;
+  outcome: string;
 };
 
 export type ProposalRunSummary = {
@@ -218,18 +226,16 @@ export type ProposalRunSummary = {
   created_at: string;
 };
 
-export type ProposalRunDetail = ProposalRunSummary & {
-  rfp_input: string;
-  proposal_output: Record<string, unknown>;
-  issues: unknown[];
-};
-
 export type ApiVersionResponse = {
   version: string;
+  /** Backend proposal graph identifier (currently the five-node DAG contract). */
   pipeline: string;
   rfp_max_chars: number;
   pipeline_timeout_s: number;
+  /** HTTP timeout budget for individual LLM calls (not “N agents”). */
   per_agent_timeout_s: number;
+  /** API loaded non-empty Supabase URL + service role key (inserts may still fail if schema/RLS/network). */
+  supabase_env_loaded?: boolean;
 };
 
 export class BidForgeApiError extends Error {

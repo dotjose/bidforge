@@ -102,8 +102,7 @@ export function WorkspaceWritingLayout({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-1 flex-col bg-background",
-        "min-h-[calc(100dvh-3.5rem)] md:min-h-[calc(100dvh-0px)]",
+        "flex min-h-0 flex-1 flex-col overflow-hidden bg-background",
         className,
       )}
     >
@@ -140,9 +139,13 @@ export function WorkspaceWritingLayout({
           ))}
         </div>
         {mobileTab === "input" ? (
-          <div className="flex min-h-0 flex-1 flex-col bg-muted/15 dark:bg-white/[0.02]">{input}</div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-y-contain bg-muted/15 dark:bg-white/[0.02]">
+            {input}
+          </div>
         ) : (
-          <div className="relative flex min-h-0 flex-1 flex-col bg-background">{output}</div>
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden overscroll-y-contain bg-background">
+            {output}
+          </div>
         )}
       </div>
 
@@ -206,7 +209,7 @@ export function WorkspaceWritingLayout({
             Close
           </Button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">{context}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-4">{context}</div>
       </aside>
     </div>
   );

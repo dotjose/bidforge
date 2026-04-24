@@ -1,4 +1,8 @@
-export { BidForgeClient, type BidForgeClientOptions } from "./client";
+export {
+  BidForgeClient,
+  proposalRunFetchTimeoutMs,
+  type BidForgeClientOptions,
+} from "./client";
 export { getApiBaseUrl, getPublicEnv } from "./env";
 export {
   BidForgeApiError,
@@ -10,10 +14,13 @@ export {
   type NormalizedDocumentOutput,
   type NormalizedDocumentMetadata,
   type NormalizedSection,
+  type MemoryPatternItem,
   type ProposalPayload,
-  type ProposalRunDetail,
-  type ProposalRunResponse,
+  type ProposalPublicRunResponse,
   type ProposalRunSummary,
+  type ProposalSavedRunPublic,
+  type ProposalSectionPublic,
+  type CrossProposalDiffPublic,
   type ProposalSections,
   type ProposalWorkspaceInput,
   type SectionAttribution,

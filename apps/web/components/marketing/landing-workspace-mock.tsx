@@ -167,8 +167,9 @@ export function LandingWorkspaceMock({
           >
             <p className="text-foreground/90">Your RFP or brief appears here.</p>
             <p className="opacity-90">
-              BidForge runs extraction, structuring, mandatory memory retrieval, and grounded drafting
-              against your indexed wins — not generic templates.
+              BidForge runs a fixed five-step graph — route the brief, pull job or RFP intelligence, design the
+              solution, write one proposal pass, then verify — with optional memory retrieval against your indexed
+              wins. No generic template chain.
             </p>
             {!reduce ? (
               <p className="relative inline-flex items-center gap-1 font-sans text-foreground/70">
@@ -228,8 +229,8 @@ export function LandingWorkspaceMock({
               <section className="pb-6">
                 <h3 className={sectionTitle}>Structured output</h3>
                 <p className={cn(sectionBody, "text-muted-foreground")}>
-                  Proposal, timeline, and verifier issues render from your API response — no seeded
-                  sample proposals in the product UI.
+                  Proposal body, timeline, and review issues come straight from the API response (the same five-node
+                  run your backend executes) — no seeded sample proposals in the product UI.
                 </p>
               </section>
               <section className="py-6">

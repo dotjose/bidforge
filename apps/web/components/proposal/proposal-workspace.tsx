@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   BookmarkPlus,
   Download,
@@ -15,12 +16,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { UserButton, SignInButton } from "@clerk/nextjs";
-import type {
-  CrossProposalDiffPayload,
-  MemorySummary,
-  ProposalPayload,
-  TimelinePhase,
-} from "@bidforge/web-sdk";
+import type { MemoryPatternItem, ProposalSavedRunPublic } from "@bidforge/web-sdk";
 import { BidForgeApiError, normalizedDocumentToPlain } from "@bidforge/web-sdk";
 import type { BrainMode } from "@/lib/store";
 import { useProposalStore } from "@/lib/store";
@@ -29,19 +25,18 @@ import { ScorePanel } from "@/components/bidforge/score-panel";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ProposalDocument } from "@/components/proposal/proposal-document";
-import { MemoryUsedPanel } from "@/components/proposal/memory-used-panel";
-import { filterProposalMarkdownForReader } from "@/components/proposal/filter-proposal-markdown";
 import { useProposalRun } from "@/lib/api/hooks/use-proposal-run";
-import { memorySummaryToInsightBullets } from "@/lib/memory-insights";
 import {
+  fallbackProposalExportTitle,
   issuesToScoreBreakdown,
   printProposalAsPdf,
-  proposalPayloadToMarkdown,
-  timelineToMarkdown,
+  publicRunToMarkdown,
+  publicRunToProposalSections,
 } from "@/lib/api/proposal-markdown";
 import { ThemeToggle } from "@/components/bidforge/theme-toggle";
 import { WorkspaceModeToggle } from "@/components/app/workspace-mode-toggle";
 import { useDebouncedCallback } from "@/lib/use-debounced-callback";
+import { toast } from "sonner";
 
 export type ProposalWorkspaceProps = {
   initialRunId?: string | null;
@@ -61,8 +56,19 @@ function pipelineFromBrainMode(m: BrainMode): "auto" | "enterprise" | "freelance
 }
 
 export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const effectiveRunId = useMemo(() => {
+    const q = searchParams.get("run")?.trim();
+    if (q) return q;
+    return (initialRunId ?? "").trim() || null;
+  }, [searchParams, initialRunId]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pendingLearningRef = useRef<string | null>(null);
+  const latestRunHydratedRef = useRef(false);
   const [briefDraft, setBriefDraft] = useState("");
+  /** Mirrors textarea — avoids auto `?run=` hydration overwriting in-progress typing before debounce lands in the store. */
+  const briefDraftRef = useRef("");
   const [titleDraft, setTitleDraft] = useState("");
   const [patternOpen, setPatternOpen] = useState(false);
   const [patternBody, setPatternBody] = useState("");
@@ -72,24 +78,19 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   const [actionBusy, setActionBusy] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [rightTab, setRightTab] = useState<"proposal" | "memory" | "review">("proposal");
+  const [memoryPatterns, setMemoryPatterns] = useState<MemoryPatternItem[] | null>(null);
 
   const jobDescription = useProposalStore((s) => s.jobDescription);
   const generated = useProposalStore((s) => s.generated);
   const score = useProposalStore((s) => s.score);
   const issues = useProposalStore((s) => s.issues);
   const scoreBreakdown = useProposalStore((s) => s.scoreBreakdown);
-  const memoryGrounded = useProposalStore((s) => s.memoryGrounded);
-  const memorySummary = useProposalStore((s) => s.memorySummary);
-  const sectionAttributions = useProposalStore((s) => s.sectionAttributions);
-  const timeline = useProposalStore((s) => s.timeline);
   const brainMode = useProposalStore((s) => s.brainMode);
-  const lastPipelineMode = useProposalStore((s) => s.lastPipelineMode);
-  const replyLikelihood0_100 = useProposalStore((s) => s.replyLikelihood0_100);
-  const lastCritique = useProposalStore((s) => s.lastCritique);
   const proposalTitle = useProposalStore((s) => s.proposalTitle);
-  const crossProposalDiff = useProposalStore((s) => s.crossProposalDiff);
   const persistedRunId = useProposalStore((s) => s.persistedRunId);
   const proposalSections = useProposalStore((s) => s.proposalSections);
+  const memoryUsed = useProposalStore((s) => s.memoryUsed);
   const setJobDescription = useProposalStore((s) => s.setJobDescription);
   const setBrainMode = useProposalStore((s) => s.setBrainMode);
   const setProposalTitle = useProposalStore((s) => s.setProposalTitle);
@@ -98,8 +99,33 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   const { state, runDebounced, runNow, rfpMaxChars, isAuthReady, isSignedIn, apiClient } =
     useProposalRun();
 
+  const postPatternIfPersisted = useCallback(
+    async (pattern: "strong" | "weak" | "saved") => {
+      const rid = persistedRunId?.trim();
+      if (!rid) {
+        toast.message("Run not saved yet", {
+          description: "Finish a generation first so Strong / Weak / Improve can tag this draft.",
+        });
+        return;
+      }
+      const label = pattern === "strong" ? "Strong" : pattern === "weak" ? "Weak" : "Saved";
+      try {
+        await apiClient.postProposalPattern({ proposalId: rid, pattern });
+        toast.success(`${label} pattern saved`, {
+          id: `pattern-${rid}-${pattern}`,
+          description: "Stored for this proposal run.",
+        });
+      } catch {
+        toast.error("Could not save pattern", {
+          id: `pattern-err-${rid}-${pattern}`,
+          description: "Generation will still continue. Check Supabase if this persists.",
+        });
+      }
+    },
+    [apiClient, persistedRunId],
+  );
+
   const [draftIntensity, setDraftIntensity] = useState<"balanced" | "strong" | "weak">("balanced");
-  const [hookDraft, setHookDraft] = useState("");
   const settingsHydrated = useRef(false);
 
   const debouncedSyncBrief = useDebouncedCallback((value: string) => {
@@ -107,8 +133,8 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   }, 450);
 
   useEffect(() => {
-    setBriefDraft(jobDescription);
-  }, [jobDescription]);
+    briefDraftRef.current = briefDraft;
+  }, [briefDraft]);
 
   useEffect(() => {
     setTitleDraft((proposalTitle ?? "").trim());
@@ -120,7 +146,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     let cancelled = false;
     void (async () => {
       try {
-        const s = await apiClient.getWorkspaceSettings();
+        const s = await apiClient.getSettingsForHydration();
         if (cancelled) return;
         if (s.proposal_mode === "auto" || s.proposal_mode === "enterprise" || s.proposal_mode === "freelance") {
           setBrainMode(s.proposal_mode);
@@ -135,60 +161,66 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   }, [apiClient, isAuthReady, isSignedIn, setBrainMode]);
 
   useEffect(() => {
-    const rid = initialRunId?.trim();
+    if (!isAuthReady || !isSignedIn) return;
+    if (effectiveRunId) return;
+    if (latestRunHydratedRef.current) return;
+    // Do not append `?run=` while the user is already typing — debounced store sync can lag behind the textarea.
+    if (briefDraftRef.current.trim().length > 0) {
+      latestRunHydratedRef.current = true;
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const runs = await apiClient.listProposalsForHydration();
+        if (cancelled) return;
+        latestRunHydratedRef.current = true;
+        if (!runs.length) return;
+        const top = runs[0]?.id?.trim();
+        if (!top || typeof window === "undefined") return;
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("run") === top) return;
+        url.searchParams.set("run", top);
+        router.replace(`${url.pathname}${url.search}${url.hash}`, { scroll: false });
+      } catch {
+        if (!cancelled) latestRunHydratedRef.current = false;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiClient, effectiveRunId, isAuthReady, isSignedIn, router]);
+
+  useEffect(() => {
+    const rid = effectiveRunId;
     if (!rid || !isSignedIn || !isAuthReady) return;
+    if (rid === persistedRunId) return;
     let cancelled = false;
     void (async () => {
       setActionMsg(null);
       try {
         const d = await apiClient.getProposalRun(rid);
         if (cancelled) return;
-        const raw = d.proposal_output?.proposal;
-        if (!raw || typeof raw !== "object") {
-          setActionMsg("That saved proposal could not be loaded.");
-          return;
+        const full = d as ProposalSavedRunPublic;
+        const { rfp_input, pipeline_mode, ...run } = full;
+        const md = publicRunToMarkdown(run);
+        const sections = publicRunToProposalSections(run);
+        const rfp = typeof rfp_input === "string" ? rfp_input : "";
+        if (rfp.trim()) {
+          setJobDescription(rfp);
+          setBriefDraft(rfp);
         }
-        const proposal = raw as ProposalPayload;
-        const md = proposalPayloadToMarkdown(proposal);
-        const issueStrings = Array.isArray(d.issues) ? d.issues.map((x) => String(x)) : [];
-        const breakdown = issuesToScoreBreakdown(issueStrings);
-        const mem = (d.proposal_output.memory_used as MemorySummary | undefined) ?? {
-          similar_proposals: [],
-          win_patterns: [],
-          methodology_blocks: [],
-          freelance_win_patterns: [],
-        };
-        const po = d.proposal_output as Record<string, unknown>;
-        const diffRaw = po.cross_proposal_diff;
-        const cross =
-          diffRaw && typeof diffRaw === "object" ? (diffRaw as CrossProposalDiffPayload) : null;
-        setJobDescription(d.rfp_input);
-        setBrainMode(d.pipeline_mode === "freelance" ? "freelance" : "enterprise");
+        setBrainMode(pipeline_mode === "freelance" ? "freelance" : "enterprise");
+        setTitleDraft((full.title || "").trim());
+        setProposalTitle((full.title || "").trim() ? full.title.trim() : null);
         setResult({
-          generated: md,
-          score: d.score,
-          issues: issueStrings,
-          suggestions: [],
+          run,
+          generatedMarkdown: md,
+          proposalSections: sections,
           scoreBreakdown: breakdown,
-          traceId: d.trace_id,
-          memoryGrounded:
-            typeof (d.proposal_output as { memory_grounded?: boolean }).memory_grounded === "boolean"
-              ? Boolean((d.proposal_output as { memory_grounded?: boolean }).memory_grounded)
-              : Boolean(proposal.memory_grounded),
-          groundingWarning: null,
-          memorySummary: mem,
-          sectionAttributions: proposal.section_attributions ?? null,
-          timeline: (d.proposal_output.timeline as TimelinePhase[] | undefined) ?? [],
-          proposalSections: proposal.sections ?? null,
-          lastPipelineMode: d.pipeline_mode === "freelance" ? "freelance" : "enterprise",
-          replyLikelihood0_100: null,
-          lastCritique: null,
-          lastHook: proposal.freelance?.hook ?? proposal.hook?.hook ?? null,
-          proposalTitle: d.title?.trim() ? d.title.trim() : null,
-          persistedRunId: d.id,
-          crossProposalDiff: cross,
+          traceId: run.proposal_id,
         });
-        setHookDraft(proposal.freelance?.hook ?? proposal.hook?.hook ?? "");
+        setRightTab("proposal");
       } catch (e) {
         if (cancelled) return;
         const msg =
@@ -199,56 +231,68 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     return () => {
       cancelled = true;
     };
-  }, [initialRunId, isSignedIn, isAuthReady, apiClient, setJobDescription, setBrainMode, setResult]);
+  }, [
+    effectiveRunId,
+    isSignedIn,
+    isAuthReady,
+    apiClient,
+    setJobDescription,
+    setBrainMode,
+    setProposalTitle,
+    setResult,
+    persistedRunId,
+  ]);
 
   useEffect(() => {
     if (state.status !== "success") return;
-    const md = proposalPayloadToMarkdown(state.data.proposal);
-    const breakdown = issuesToScoreBreakdown(state.data.issues);
-    const mem: MemorySummary =
-      state.data.memory_used ??
-      state.data.proposal.memory_summary ??
-      ({
-        similar_proposals: [],
-        win_patterns: [],
-        methodology_blocks: [],
-      } as MemorySummary);
-    const crit = state.data.critique;
+    const run = state.data;
+    const md = publicRunToMarkdown(run);
+    const sections = publicRunToProposalSections(run);
+    const breakdown = issuesToScoreBreakdown(run.issues);
     setResult({
-      generated: md,
-      score: state.data.score,
-      issues: state.data.issues,
-      suggestions: [],
+      run,
+      generatedMarkdown: md,
+      proposalSections: sections,
       scoreBreakdown: breakdown,
-      traceId: state.data.run_id || state.data.trace_id,
-      memoryGrounded: state.data.memory_grounded,
-      groundingWarning: state.data.grounding_warning ?? null,
-      memorySummary: mem,
-      sectionAttributions: state.data.proposal.section_attributions ?? null,
-      timeline: state.data.timeline ?? [],
-      proposalSections: state.data.proposal.sections ?? null,
-      lastPipelineMode: state.data.pipeline_mode,
-      replyLikelihood0_100: state.data.reply_likelihood_0_100 ?? null,
-      lastCritique: crit
-        ? {
-            improvements: Array.isArray(crit.improvements) ? crit.improvements : [],
-            reply_probability_delta:
-              typeof crit.reply_probability_delta === "string"
-                ? crit.reply_probability_delta
-                : undefined,
-            top1_style_rewrite:
-              typeof crit.top1_style_rewrite === "string" ? crit.top1_style_rewrite : undefined,
-          }
-        : null,
-      lastHook: state.data.hook?.hook ?? null,
-      proposalTitle: state.data.title?.trim() ? state.data.title.trim() : null,
-      persistedRunId: state.data.persisted_run_id ?? null,
-      crossProposalDiff: state.data.cross_proposal_diff ?? null,
+      traceId: run.proposal_id,
     });
-    setHookDraft(state.data.hook?.hook ?? "");
+    setTitleDraft((run.title || "").trim());
+    setProposalTitle((run.title || "").trim() ? run.title.trim() : null);
     setPatternOpen(false);
     setActionMsg(null);
-  }, [state, setResult]);
+    setRightTab("proposal");
+    const pid = run.proposal_id?.trim();
+    if (pid) {
+      toast.success("Proposal saved", {
+        id: `proposal-saved-${pid}`,
+        description: "Your draft is in saved runs. Use Save to copy the link.",
+      });
+    }
+    if (pid && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("run") !== pid) {
+        url.searchParams.set("run", pid);
+        router.replace(`${url.pathname}${url.search}${url.hash}`, { scroll: false });
+      }
+    }
+    pendingLearningRef.current = null;
+  }, [state, setResult, setProposalTitle, router]);
+
+  useEffect(() => {
+    if (rightTab !== "memory" || !isSignedIn) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await apiClient.listMemoryPatterns();
+        if (!cancelled) setMemoryPatterns(rows);
+      } catch {
+        if (!cancelled) setMemoryPatterns([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rightTab, isSignedIn, apiClient]);
 
   const ingestFile = useCallback(
     async (f: File) => {
@@ -332,6 +376,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   const submitPattern = useCallback(async () => {
     const body = patternBody.trim();
     if (!body.length) {
+      toast.message("Add pattern text", { description: "Paste or type the pattern before saving." });
       setActionMsg("Add pattern text before saving.");
       return;
     }
@@ -346,23 +391,30 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
         content: body,
         title: patternTitle.trim() || "Win pattern",
         tags,
-        pattern_kind: lastPipelineMode === "freelance" ? "freelance_win_pattern" : "win_pattern",
+        pattern_kind: brainMode === "freelance" ? "freelance_win_pattern" : "win_pattern",
       });
-      setActionMsg("Saved to your reusable snippets.");
+      pendingLearningRef.current = body.slice(0, 4000);
+      toast.success("Pattern saved to memory", {
+        description: "Your next generation can use this as a cue.",
+      });
+      setActionMsg(null);
       setPatternOpen(false);
     } catch (e) {
       const msg =
         e instanceof BidForgeApiError ? e.message : (e as Error).message || "Request failed";
+      toast.error("Could not save pattern", { description: msg });
       setActionMsg(msg);
     } finally {
       setActionBusy(false);
     }
-  }, [apiClient, lastPipelineMode, patternBody, patternTags, patternTitle]);
+  }, [apiClient, brainMode, patternBody, patternTags, patternTitle]);
 
   const onPrintPdf = useCallback(() => {
-    const docTitle = (titleDraft || proposalTitle || "").trim() || undefined;
+    const docTitle =
+      (titleDraft || proposalTitle || "").trim() ||
+      fallbackProposalExportTitle(briefDraft, generated, proposalTitle);
     printProposalAsPdf(generated, undefined, docTitle);
-  }, [generated, proposalTitle, titleDraft]);
+  }, [briefDraft, generated, proposalTitle, titleDraft]);
 
   const onDownloadServerPdf = useCallback(async () => {
     if (!proposalSections) {
@@ -372,21 +424,39 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     setActionBusy(true);
     setActionMsg(null);
     try {
-      const exportTitle = (titleDraft || proposalTitle || "").trim();
-      const bullets = memorySummaryToInsightBullets(memorySummary ?? undefined);
+      const exportTitle =
+        (titleDraft || proposalTitle || "").trim() ||
+        fallbackProposalExportTitle(briefDraft, generated, proposalTitle);
+      const s = proposalSections;
       const blob = await apiClient.exportProposalPdf({
-        title: exportTitle || "Proposal",
+        title: exportTitle,
         sections: {
-          executive_summary: proposalSections.executive_summary,
-          technical_approach: proposalSections.technical_approach,
-          delivery_plan: proposalSections.delivery_plan,
-          risk_management: proposalSections.risk_management,
+          opening: s.opening ?? s.hook ?? s.executive_summary,
+          hook: s.opening ?? s.hook ?? s.executive_summary,
+          executive_summary: s.executive_summary,
+          understanding: s.understanding ?? s.what_ill_deliver ?? "",
+          solution: s.solution ?? "",
+          what_ill_deliver: s.understanding ?? s.what_ill_deliver ?? "",
+          execution_plan: s.execution_plan ?? s.technical_approach,
+          technical_approach: s.technical_approach,
+          timeline: s.timeline ?? s.timeline_block ?? "",
+          timeline_block: s.timeline ?? s.timeline_block ?? "",
+          deliverables: s.deliverables ?? s.deliverables_block ?? "",
+          deliverables_block: s.deliverables ?? s.deliverables_block ?? "",
+          delivery_plan: s.delivery_plan,
+          experience: s.experience ?? s.relevant_experience ?? "",
+          relevant_experience: s.experience ?? s.relevant_experience ?? "",
+          risks: s.risks ?? s.risk_reduction ?? "",
+          risk_reduction: s.risks ?? s.risk_reduction ?? "",
+          risk_management: s.risk_management,
+          next_step: s.next_step ?? s.call_to_action ?? "",
+          call_to_action: s.next_step ?? s.call_to_action ?? "",
         },
-        timeline,
-        pipeline_mode: lastPipelineMode === "freelance" ? "freelance" : "enterprise",
+        timeline: [],
+        pipeline_mode: brainMode === "freelance" ? "freelance" : "enterprise",
         score: score ?? undefined,
         issues: issues.slice(0, 12),
-        memory_insight_bullets: bullets.length ? bullets : undefined,
+        memory_insight_bullets: undefined,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -394,7 +464,8 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
       a.download = "proposal-export.pdf";
       a.click();
       URL.revokeObjectURL(url);
-      setActionMsg("PDF downloaded.");
+      toast.success("PDF downloaded");
+      setActionMsg(null);
     } catch (e) {
       const msg =
         e instanceof BidForgeApiError ? e.message : (e as Error).message || "Export failed";
@@ -402,17 +473,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     } finally {
       setActionBusy(false);
     }
-  }, [
-    apiClient,
-    issues,
-    memorySummary,
-    proposalSections,
-    score,
-    timeline,
-    lastPipelineMode,
-    proposalTitle,
-    titleDraft,
-  ]);
+  }, [apiClient, issues, proposalSections, score, brainMode, briefDraft, generated, proposalTitle, titleDraft]);
 
   const loading = state.status === "loading";
   const errorMsg =
@@ -423,6 +484,10 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
       : null;
 
   const briefForSubmit = briefDraft.trim();
+  const briefTextareaRows = useMemo(
+    () => Math.min(42, Math.max(14, briefDraft.split(/\r?\n/).length + 6)),
+    [briefDraft],
+  );
   const canSubmit =
     isAuthReady &&
     isSignedIn &&
@@ -430,19 +495,23 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     !loading &&
     briefForSubmit.length <= rfpMaxChars;
 
-  const timelineMd = timelineToMarkdown(timeline);
-  const isFreelanceRun = lastPipelineMode === "freelance";
-  const runWarnings = state.status === "success" ? (state.data.insights?.warnings ?? []) : [];
-  const runDegraded = state.status === "success" && state.data.status === "degraded";
-  const verifierSuggestions =
-    state.status === "success" ? (state.data.suggestions ?? []).filter((s) => String(s).trim()) : [];
+  const isFreelanceRun = brainMode === "freelance";
 
-  const readerMarkdown = useMemo(() => filterProposalMarkdownForReader(generated), [generated]);
-
-  const insightsAttributions =
-    sectionAttributions?.filter(
-      (a) => Array.isArray(a.based_on_memory) && a.based_on_memory.length > 0,
-    ) ?? [];
+  const tabBtn = (id: "proposal" | "memory" | "review", label: string) => (
+    <button
+      key={id}
+      type="button"
+      onClick={() => setRightTab(id)}
+      className={cn(
+        "rounded-t-lg px-4 py-2.5 text-[14px] font-medium transition-colors",
+        rightTab === id
+          ? "border border-b-0 border-border bg-background text-foreground"
+          : "border border-transparent text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+    </button>
+  );
 
   const flushTitle = useCallback(() => {
     const t = titleDraft.trim();
@@ -453,18 +522,42 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     if (persistedRunId) {
       const url = `${window.location.origin}/proposal?run=${encodeURIComponent(persistedRunId)}`;
       void navigator.clipboard.writeText(url).then(
-        () => setActionMsg("Link to this saved run copied."),
-        () => setActionMsg("Could not copy link."),
+        () => {
+          toast.success("Link copied", { description: "Share this URL to reopen this saved run." });
+          setActionMsg(null);
+        },
+        () => {
+          toast.error("Could not copy link");
+          setActionMsg("Could not copy link.");
+        },
+      );
+      return;
+    }
+    if (generated.trim()) {
+      setActionMsg(
+        "This draft has no saved run id yet—copy or export it. If this keeps happening, the API cannot write to Supabase (check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY).",
       );
       return;
     }
     setActionMsg("Generate a proposal first—it is added to your saved runs automatically.");
-  }, [persistedRunId]);
+  }, [generated, persistedRunId]);
 
   const runGenerate = useCallback(() => {
     setJobDescription(briefDraft);
-    runDebounced(briefForSubmit, pipelineFromBrainMode(brainMode), draftIntensity);
-  }, [briefDraft, briefForSubmit, brainMode, draftIntensity, runDebounced, setJobDescription]);
+    runDebounced(
+      briefForSubmit,
+      pipelineFromBrainMode(brainMode),
+      draftIntensity,
+      () => {
+        const learn = pendingLearningRef.current?.trim();
+        if (learn) pendingLearningRef.current = null;
+        return {
+          continuationRunId: persistedRunId ?? undefined,
+          learningSnippet: learn || undefined,
+        };
+      },
+    );
+  }, [briefDraft, briefForSubmit, brainMode, draftIntensity, persistedRunId, runDebounced, setJobDescription]);
 
   const openPatternFromOutput = useCallback(() => {
     const hookBlock = generated.split(/^## Hook\s*$/m)[1]?.split(/^## /m)[0]?.trim() ?? "";
@@ -549,8 +642,13 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
       }}
     >
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-8 md:px-8 md:pb-8 md:pt-10">
+        {/* One scroll surface for brief + helpers — avoid nested scroll vs the textarea */}
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain scroll-smooth px-6 pb-4 pt-8 md:px-8 md:pb-6 md:pt-10">
+          <label htmlFor="proposal-brief" className="sr-only">
+            RFP or job brief
+          </label>
           <textarea
+            id="proposal-brief"
             value={briefDraft}
             onChange={(e) => {
               const v = e.target.value;
@@ -559,8 +657,12 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
             }}
             onBlur={() => setJobDescription(briefDraft)}
             spellCheck
-            placeholder="Paste the RFP or job post. You can drop a PDF or .txt here."
-            className="min-h-[600px] h-[70vh] w-full max-w-none resize-y border-0 bg-transparent py-2 text-lg leading-[1.7] text-foreground outline-none ring-0 placeholder:text-muted-foreground md:text-[18px] md:leading-[1.75]"
+            rows={briefTextareaRows}
+            placeholder=""
+            className={cn(
+              "box-border w-full max-w-none resize-none border-0 bg-transparent py-2 text-lg leading-[1.7] text-foreground outline-none ring-0 placeholder:text-muted-foreground md:text-[18px] md:leading-[1.75]",
+              "min-h-[max(400px,min(42dvh,520px))] [field-sizing:content]",
+            )}
           />
           <div className="mt-8 flex flex-col gap-5 border-t border-border/60 pt-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -585,7 +687,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
                 onClick={() => fileRef.current?.click()}
               >
                 <Upload className="size-4" aria-hidden />
-                Upload PDF / TXT
+                Upload PDF / Word / TXT
               </Button>
             </div>
             {errorMsg ? (
@@ -629,96 +731,81 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
           Context
         </Button>
       </div>
-      {runDegraded || runWarnings.length > 0 ? (
-        <div
-          className="shrink-0 border-b border-amber-500/25 bg-amber-500/10 px-5 py-3 text-[14px] text-amber-950 dark:text-amber-50"
-          role="status"
-        >
-          {runDegraded ? (
-            <p className="font-medium text-foreground">This run finished in a limited mode—you still have an editable draft.</p>
-          ) : null}
-          {runWarnings.length > 0 ? (
-            <ul className="mt-2 list-disc space-y-1 pl-5">
-              {runWarnings.map((w, i) => (
-                <li key={i}>{w}</li>
-              ))}
-            </ul>
-          ) : null}
+      <div className="shrink-0 border-b border-border bg-muted/10 px-4 pt-2 md:px-6">
+        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Proposal workspace">
+          {tabBtn("proposal", "Proposal")}
+          {tabBtn("memory", "Memory")}
+          {tabBtn("review", "Review")}
         </div>
-      ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto w-full max-w-[900px] px-5 pb-28 pt-14 md:px-8 md:pb-40 md:pt-16">
-          {isFreelanceRun ? (
-            <div className="mb-10 space-y-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-6 dark:bg-violet-500/10">
-              {replyLikelihood0_100 != null ? (
-                <div>
-                  <p className="text-[14px] text-muted-foreground">Reply likelihood (model)</p>
-                  <div className="mt-2 h-2 w-full max-w-sm overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-500"
-                      style={{ width: `${Math.min(100, Math.max(0, replyLikelihood0_100))}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-[16px] font-semibold tabular-nums">{replyLikelihood0_100}/100</p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain scroll-smooth">
+        <div className="mx-auto w-full max-w-[900px] px-5 pb-32 pt-8 md:px-8 md:pb-36 md:pt-10">
+          {rightTab === "proposal" ? (
+            <>
+              {generated.trim() ? (
+                <ProposalDocument
+                  markdown={generated}
+                  sectionAttributions={null}
+                  memorySummary={null}
+                  presentation={isFreelanceRun ? "freelance" : "enterprise"}
+                  density="reader"
+                  showSectionActions={false}
+                />
+              ) : null}
+              {loading ? (
+                <div
+                  className={cn(
+                    "flex gap-3 text-[15px] leading-relaxed text-muted-foreground md:text-[16px]",
+                    generated.trim() ? "items-start py-10" : "min-h-[40vh] flex-col items-center justify-center py-20 text-center",
+                  )}
+                >
+                  <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
+                  <p className={cn(generated.trim() ? "min-w-0 pt-0.5" : "max-w-sm")}>
+                    Running the proposal graph (route → brief intel → solution → write → verify). The brief stays in
+                    the left column.
+                  </p>
                 </div>
               ) : null}
-              <label className="text-[15px] font-medium text-foreground" htmlFor="hook-preview">
-                Hook
-              </label>
-              <textarea
-                id="hook-preview"
-                value={hookDraft}
-                onChange={(e) => setHookDraft(e.target.value)}
-                rows={5}
-                className="w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-[16px] leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
+            </>
           ) : null}
-          {readerMarkdown.trim() ? (
-            <ProposalDocument
-              markdown={readerMarkdown}
-              sectionAttributions={sectionAttributions}
-              memorySummary={memorySummary}
-              presentation={isFreelanceRun ? "freelance" : "enterprise"}
-              density="reader"
-              showSectionActions={false}
-            />
-          ) : null}
-          {loading ? (
-            <div
-              className={cn(
-                "flex items-center gap-3 text-[16px] text-muted-foreground",
-                readerMarkdown.trim() ? "py-10" : "min-h-[40vh] flex-col justify-center py-20",
+          {rightTab === "memory" ? (
+            <div className="space-y-4">
+              <p className="text-[14px] leading-relaxed text-muted-foreground">
+                Saved win hooks and patterns (no embeddings or raw retrieval logs).
+              </p>
+              {memoryPatterns === null ? (
+                <p className="text-[14px] text-muted-foreground">Loading…</p>
+              ) : memoryPatterns.length === 0 ? (
+                <p className="text-[14px] text-muted-foreground">
+                  No indexed patterns yet — save a strong proposal to build this library.
+                </p>
+              ) : (
+                <ul className="space-y-4">
+                  {memoryPatterns.map((p, i) => (
+                    <li
+                      key={`${p.label.slice(0, 24)}-${i}`}
+                      className="rounded-xl border border-border/70 bg-background/80 px-4 py-3 text-[15px] leading-snug text-foreground/90"
+                    >
+                      <p className="font-medium text-foreground">{p.outcome}</p>
+                      <p className="mt-1 text-[14px] text-muted-foreground">{p.label}</p>
+                    </li>
+                  ))}
+                </ul>
               )}
-            >
-              <Loader2 className="size-5 animate-spin" aria-hidden />
-              Generating…
             </div>
           ) : null}
-          {timelineMd.trim() ? (
-            <section className="mt-14 border-t border-border/60 pt-12">
-              <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground">Timeline</h2>
-              <div className="mt-6">
-                <ProposalDocument markdown={timelineMd} density="reader" showSectionActions={false} />
-              </div>
-            </section>
-          ) : null}
-          {issues.length > 0 ? (
-            <section className="mt-14 border-t border-border/60 pt-12">
-              <h2 className="font-display text-2xl font-semibold tracking-tight text-amber-900 dark:text-amber-100">
-                Issues
-              </h2>
-              <ul className="mt-6 space-y-3">
-                {issues.map((issue, i) => (
-                  <li
-                    key={i}
-                    className="rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-3 text-[16px] leading-relaxed text-foreground dark:bg-amber-500/10"
-                  >
-                    {issue}
-                  </li>
-                ))}
-              </ul>
-            </section>
+          {rightTab === "review" ? (
+            <div className="max-w-lg">
+              <ScorePanel
+                variant="minimal"
+                score={score}
+                issues={issues}
+                breakdown={scoreBreakdown ?? emptyBreakdown}
+              />
+              {memoryUsed === true ? (
+                <p className="mt-4 text-[13px] text-muted-foreground">Indexed memory influenced this generation.</p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>
@@ -726,94 +813,11 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   );
 
   const contextPanel = (
-    <div className="flex flex-col gap-8">
-      <MemoryUsedPanel
-        memorySummary={memorySummary}
-        memoryGrounded={memoryGrounded}
-        hasCompletedRun={memoryGrounded !== null}
-        pipelineMode={lastPipelineMode}
-      />
-      {verifierSuggestions.length ? (
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Verifier next steps
-          </p>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-[15px] text-muted-foreground">
-            {verifierSuggestions.map((t, i) => (
-              <li key={`vs-${i}`}>{t}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {lastCritique?.improvements?.length ? (
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Critique</p>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-[15px] text-muted-foreground">
-            {lastCritique.improvements.map((t, i) => (
-              <li key={i}>{t}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {crossProposalDiff &&
-      (crossProposalDiff.stronger_hooks?.length ||
-        crossProposalDiff.missing_signals?.length ||
-        crossProposalDiff.better_cta?.length ||
-        crossProposalDiff.structure_optimization?.length) ? (
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Diff vs recent wins</p>
-          <div className="mt-3 space-y-4 text-[14px] text-muted-foreground">
-            {crossProposalDiff.stronger_hooks?.length ? (
-              <div>
-                <p className="font-medium text-foreground">Stronger hooks</p>
-                <ul className="mt-1 list-disc pl-5">
-                  {crossProposalDiff.stronger_hooks.map((t, i) => (
-                    <li key={`h-${i}`}>{t}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {crossProposalDiff.missing_signals?.length ? (
-              <div>
-                <p className="font-medium text-foreground">Missing signals</p>
-                <ul className="mt-1 list-disc pl-5">
-                  {crossProposalDiff.missing_signals.map((t, i) => (
-                    <li key={`s-${i}`}>{t}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-      {memoryGrounded === true && insightsAttributions.length > 0 ? (
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Signals used</p>
-          <ul className="mt-3 space-y-3 text-[14px] text-muted-foreground">
-            {insightsAttributions.map((a, i) => (
-              <li key={`${a.title}-${i}`}>
-                <span className="font-medium text-foreground">{a.title}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {isFreelanceRun && lastCritique?.top1_style_rewrite?.trim() ? (
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Style rewrite</p>
-          <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-muted-foreground">
-            {lastCritique.top1_style_rewrite.trim()}
-          </p>
-        </div>
-      ) : null}
-      {score != null ? (
-        <ScorePanel
-          score={score}
-          issues={issues}
-          breakdown={scoreBreakdown ?? emptyBreakdown}
-          variant={isFreelanceRun ? "freelance" : "enterprise"}
-        />
-      ) : null}
+    <div className="flex flex-col gap-6 text-[14px] leading-relaxed text-muted-foreground">
+      <p>
+        Use <span className="font-medium text-foreground">Proposal / Memory / Score</span> tabs on the right. Patterns
+        and PDF export are in the bar below.
+      </p>
     </div>
   );
 
@@ -835,9 +839,15 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
           className="h-11 min-h-11 gap-2 rounded-xl px-5 text-[15px]"
           disabled={!canSubmit || actionBusy}
           onClick={() => {
-            setDraftIntensity("balanced");
-            setJobDescription(briefDraft);
-            void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "balanced");
+            void (async () => {
+              setDraftIntensity("balanced");
+              setJobDescription(briefDraft);
+              await postPatternIfPersisted("saved");
+              void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "balanced", {
+                continuationRunId: persistedRunId ?? undefined,
+                learningSnippet: pendingLearningRef.current?.trim() || undefined,
+              });
+            })();
           }}
         >
           <Wand2 className="size-4" aria-hidden />
@@ -849,9 +859,15 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
           className="h-11 min-h-11 gap-2 rounded-xl px-5 text-[15px]"
           disabled={actionBusy || !isSignedIn || !canSubmit}
           onClick={() => {
-            setDraftIntensity("strong");
-            setJobDescription(briefDraft);
-            void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "strong");
+            void (async () => {
+              setDraftIntensity("strong");
+              setJobDescription(briefDraft);
+              await postPatternIfPersisted("strong");
+              void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "strong", {
+                continuationRunId: persistedRunId ?? undefined,
+                learningSnippet: pendingLearningRef.current?.trim() || undefined,
+              });
+            })();
           }}
         >
           <ThumbsUp className="size-4" aria-hidden />
@@ -863,9 +879,15 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
           className="h-11 min-h-11 gap-2 rounded-xl px-5 text-[15px]"
           disabled={actionBusy || !isSignedIn || !canSubmit}
           onClick={() => {
-            setDraftIntensity("weak");
-            setJobDescription(briefDraft);
-            void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "weak");
+            void (async () => {
+              setDraftIntensity("weak");
+              setJobDescription(briefDraft);
+              await postPatternIfPersisted("weak");
+              void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "weak", {
+                continuationRunId: persistedRunId ?? undefined,
+                learningSnippet: pendingLearningRef.current?.trim() || undefined,
+              });
+            })();
           }}
         >
           <ThumbsDown className="size-4" aria-hidden />

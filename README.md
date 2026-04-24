@@ -62,4 +62,4 @@ Use the **repository root** as the Vercel **Root Directory** (leave the field em
 
 ## Product documentation
 
-See [`docs/agents.md`](./docs/agents.md) for a concise, product-level overview of the intelligence roles behind each run.
+See [`docs/agents.md`](./docs/agents.md) for the **5-node** proposal DAG, `node_id` list, and how it differs from pre-pipeline workspace steps.

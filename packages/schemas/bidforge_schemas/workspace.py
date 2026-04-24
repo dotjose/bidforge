@@ -55,6 +55,11 @@ class RagConfig(BaseModel):
 class WorkspaceSettings(BaseModel):
     tone: str = ""
     writing_style: str = ""
+    openrouter_model_primary: str = Field(
+        default="",
+        max_length=200,
+        description="OpenRouter chat model id for this account; empty uses API OPENROUTER_MODEL_PRIMARY.",
+    )
     proposal_mode: Literal["auto", "enterprise", "freelance"] = "auto"
     rag: RagConfig = Field(default_factory=RagConfig)
     company_profile: dict[str, Any] = Field(

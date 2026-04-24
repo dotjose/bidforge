@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Literal
 
 from fpdf import FPDF
@@ -34,9 +35,64 @@ def _break_long_words(s: str, max_run: int = 88) -> str:
     return "\n".join(lines_out)
 
 
+def _strip_light_markdown(s: str) -> str:
+    """Remove common markdown tokens — PDF uses plain text, not a markdown renderer."""
+    t = s or ""
+    t = re.sub(r"\*\*(.+?)\*\*", r"\1", t, flags=re.DOTALL)
+    t = re.sub(r"__(.+?)__", r"\1", t, flags=re.DOTALL)
+    t = re.sub(r"`([^`]+)`", r"\1", t)
+    t = re.sub(r"^#+\s+", "", t, flags=re.MULTILINE)
+    return t
+
+
+def _normalize_for_pdf_core_fonts(s: str) -> str:
+    """
+    Core PDF fonts are limited to Latin-1. Map bullets / punctuation / symbols to ASCII
+    before latin-1 encoding so lists render as '-' instead of '?'.
+    """
+    t = unicodedata.normalize("NFKC", s or "")
+    repl = {
+        "\u2022": "- ",  # bullet
+        "\u2023": "- ",
+        "\u2043": "- ",
+        "\u2219": "- ",
+        "\u25aa": "- ",
+        "\u25cf": "- ",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u00a0": " ",
+        "\u200b": "",
+        "\ufeff": "",
+    }
+    for k, v in repl.items():
+        t = t.replace(k, v)
+    # Strip emoji / non-latin-1 remainder (no hallucinated glyphs)
+    out: list[str] = []
+    for ch in t:
+        o = ord(ch)
+        if ch == "\n" or ch == "\t":
+            out.append(ch)
+        elif o < 128:
+            out.append(ch)
+        elif o <= 255:
+            try:
+                ch.encode("latin-1")
+                out.append(ch)
+            except UnicodeEncodeError:
+                out.append(" ")
+        else:
+            out.append(" ")
+    return "".join(out)
+
+
 def _pdf_text(s: str) -> str:
-    """FPDF core fonts are latin-1; replace unsupported chars."""
-    return (s or "").encode("latin-1", errors="replace").decode("latin-1")
+    """Core-font safe line — bullets and common unicode normalized first."""
+    step = _strip_light_markdown(_normalize_for_pdf_core_fonts(s))
+    return step.encode("latin-1", errors="replace").decode("latin-1")
 
 
 def _printable_width(pdf: FPDF) -> float:
@@ -64,9 +120,8 @@ def build_proposal_pdf_bytes(
     memory_insight_bullets: list[str] | None = None,
     memory_appendix: str | None = None,
 ) -> bytes:
-    """Export client-ready PDF: title, summary, approach, timeline, risks — no raw RFP or memory appendix."""
+    """Export client-ready PDF: title, summary, approach, timeline, risks — no raw RFP or memory dumps."""
     _ = memory_appendix
-    _ = memory_insight_bullets
     _ = score
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=14)
@@ -86,22 +141,41 @@ def build_proposal_pdf_bytes(
     )
     pdf.ln(2)
 
-    ex = (sections.get("executive_summary") or "").strip()
-    ta = (sections.get("technical_approach") or "").strip()
+    ex = (sections.get("opening") or sections.get("hook") or sections.get("executive_summary") or "").strip()
+    what = (sections.get("understanding") or sections.get("what_ill_deliver") or "").strip()
+    sol = (sections.get("solution") or "").strip()
+    ta = (sections.get("execution_plan") or sections.get("technical_approach") or "").strip()
+    tl = (sections.get("timeline") or sections.get("timeline_block") or "").strip()
+    deliv = (sections.get("deliverables") or sections.get("deliverables_block") or "").strip()
     dp = (sections.get("delivery_plan") or "").strip()
+    rel = (sections.get("experience") or sections.get("relevant_experience") or "").strip()
+    risk_r = (sections.get("risks") or sections.get("risk_reduction") or "").strip()
     rm = (sections.get("risk_management") or "").strip()
+    cta = (sections.get("next_step") or sections.get("call_to_action") or "").strip()
 
     if pipeline_mode == "freelance":
-        technical_merged = "\n\n".join(p for p in (ta, dp, rm) if p)
+        body_merged = "\n\n".join(p for p in (what, sol, ta, tl, deliv, dp, rel, risk_r, rm, cta) if p)
         order = [
-            ("Executive summary", ex),
-            ("Technical approach", technical_merged),
+            ("Opening", ex),
+            ("Proposal", body_merged),
+        ]
+    elif what or sol or ta or tl or deliv:
+        order = [
+            ("Opening", ex),
+            ("Understanding", what),
+            ("Solution", sol),
+            ("Execution plan", ta),
+            ("Timeline", tl),
+            ("Deliverables", deliv),
+            ("Relevant experience", rel),
+            ("Risk management", risk_r or rm[:4000] if rm else ""),
+            ("Next step", cta),
         ]
     else:
-        technical_merged = "\n\n".join(p for p in (ta, dp) if p)
+        technical_merged = "\n\n".join(p for p in (ta, dp, rm) if p)
         order = [
-            ("Executive summary", ex),
-            ("Technical approach", technical_merged),
+            ("Opening", ex),
+            ("Plan & proof", technical_merged),
         ]
 
     for head, body in order:
@@ -160,6 +234,33 @@ def build_proposal_pdf_bytes(
                 wrapmode=WrapMode.WORD,
             )
         pdf.ln(2)
+
+    bullets = [str(b).strip() for b in (memory_insight_bullets or []) if str(b).strip()]
+    if bullets:
+        pdf.ln(2)
+        pdf.set_x(pdf.l_margin)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.multi_cell(
+            w,
+            7,
+            _pdf_text("Memory-informed signals"),
+            align=Align.L,
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+            wrapmode=WrapMode.WORD,
+        )
+        pdf.set_font("Helvetica", size=10)
+        for b in bullets[:24]:
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(
+                w,
+                5,
+                _pdf_text(f"- {_safe_txt(b, 400)}"),
+                align=Align.L,
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+                wrapmode=WrapMode.WORD,
+            )
 
     risk_chunks: list[str] = []
     if pipeline_mode == "enterprise" and rm:

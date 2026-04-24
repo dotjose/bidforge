@@ -68,7 +68,7 @@ export function ProposalDocument({
             key={`${section.title}-${i}`}
             className={cn(
               "border-b border-border/50 pb-10 last:border-0 last:pb-0 md:pb-12",
-              reader && "border-border/40 pb-12 md:pb-14 [content-visibility:auto]",
+              reader && "border-border/40 pb-12 md:pb-14",
               isFreelance && !reader && "pb-8 md:pb-9",
             )}
           >

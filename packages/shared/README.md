@@ -1,3 +1,3 @@
 # bidforge-shared
 
-LLM client protocol, OpenAI adapter, and shared errors. Agents depend on `LLMClient` only.
+`LLMClient` protocol, OpenRouter adapter, and shared errors used by agents and tests.

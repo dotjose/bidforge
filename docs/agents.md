@@ -1,35 +1,78 @@
-# BidForge Agents Architecture
+# BidForge proposal generation — **5-node DAG**
 
-BidForge routes each request through a small set of specialized roles. Together they turn a brief into a mode-appropriate proposal and a clear review—without exposing internal tooling names to customers.
+One deterministic execution graph per `POST /api/proposal/run` (after pre-pipeline workspace prep). **Exactly one node performs long-form proposal writing:** `proposal` (`proposal_agent` implementation).
 
-## 1. Input Router Agent
+---
 
-Classifies raw text into **Enterprise RFP** vs **Freelance job** (Upwork, Freelancer, or informal job posts) and selects the cognitive path that follows.
+## Vocabulary
 
-## 2. Job Understanding Agent
+| Term | Meaning |
+|------|--------|
+| **DAG node** | A unit traced in `public.proposal_events` with stable `node_id` (`api/app/pipeline/dag_run.py`). |
+| **Node module** | Python per DAG node: `router_agent`, `job_intel_agent`, `solution_agent`, `proposal_agent`, `verifier_agent` under `packages/agents/bidforge_agents/`. |
+| **Pre-pipeline** | Workspace shaping **before** the DAG; not DAG nodes. |
 
-Reads the post as **signals**, not instructions: extracts explicit asks, implicit needs, urgency, buyer sophistication, budget sensitivity, conversion triggers, and risk concerns that affect whether the client replies.
+---
 
-## 3. RAG Memory Agent
+## Pre-pipeline (HTTP only — **not** the proposal DAG)
 
-Retrieves indexed snippets: similar wins, methodology fragments, and **freelance win patterns** (hooks and short proof shapes). When nothing is indexed, the system may apply marked **synthetic starter seeds** so generation stays high-signal—never fake client names.
+Runs in `api/app/modules/proposal/router.py` before `execute_proposal_pipeline`:
 
-## 4. Freelance Hook Agent
+| Step | Function | Package |
+|------|----------|---------|
+| 1 | `run_document_normalizer_agent` | `api/app/workspace/agents.py` |
+| 2 | `run_workspace_builder_agent` | `api/app/workspace/agents.py` |
+| 3 | `run_settings_injector_agent` | `api/app/workspace/agents.py` |
 
-Produces the **first screenful** of the bid: a tight hook, a trust signal, an honest relevance rating, and optional **A/B hook variants** so you can test angles quickly.
+---
 
-## 5. Proposal Generator Agent
+## Proposal DAG — **5 nodes** (mandatory order)
 
-Builds the final body using **mode-specific structure**. Freelance mode uses a conversion layout (hook → need → approach → proof → CTA), not RFP section titles. Enterprise mode uses structured long-form sections.
+**Orchestrator:** `api/app/pipeline/orchestrator.py`  
+**Trace + cache + events:** `api/app/pipeline/dag_run.py` → `public.proposal_events`, `public.proposal_node_cache`  
+**Bundled helpers:** `packages/agents/bidforge_agents/proposal_dag.py` composes `solution` → `proposal` → `verifier` calls for the orchestrator.
 
-## 6. Verifier Agent
+| # | `node_id` | Role | Writer? |
+|---|-----------|------|--------|
+| 1 | `router` | Classify `freelance` \| `enterprise`; routing only | No |
+| 2 | `job_intel` | Enterprise: extract + requirement matrix + RAG. Freelance: job signals + RAG. | No |
+| 3 | `solution` | Blueprint + strategy; single source of truth for tasks / timeline / deliverables / positioning | No |
+| 4 | `proposal` | Full business proposal from solution output (**only** long-form writer) | **Yes** |
+| 5 | `verifier` | Score, structure checks, timeline/deliverable validation (read-only) | No |
 
-Scores the draft against the brief: enterprise runs emphasize compliance and completeness; freelance runs emphasize **reply likelihood**, hook strength, trust, and conciseness—and flag generic tone or “RFP voice” leaks.
+Composite prompt version strings (enterprise vs freelance) live on keys like `job_intel_enterprise`, `solution_freelance`, `verifier_enterprise` in `default_node_prompt_versions()`.
 
-## 7. CrossProposalDiffAgent
+---
 
-Contrasts the current proposal with the **last three rows** from `freelance_win_memory` (persisted high-scoring wins). Outputs **stronger_hooks**, **missing_signals**, **better_cta**, and **structure_optimization** lists for the Review tab. If the LLM step or memory read fails, the pipeline still completes with an empty diff (degraded observability only).
+## Run summary (Supabase)
 
-## 8. Critique Agent
+After persistence, `DagRun.emit_run_summary` appends an additional `proposal_events` row with logical id **`dag_summary`**. Its `output` JSON includes `proposal_id`, `pipeline_mode`, `nodes` (snapshot of per-node outputs: `router`, `job_intel`, `solution`, `proposal`, `verifier`), `version`, `timestamp`, and `model: "openrouter"`.
 
-Mode-aware polish notes; in freelance mode it may also emit an optional **top-1% style rewrite** for side-by-side comparison with your draft.
+---
+
+## What is *not* in the DAG
+
+No separate traced nodes for: critique-as-rewrite, formatter-only pass, freelance hook agent, duplicate strategy layers, or cross-proposal diff **writing**. Cross-diff may exist as an empty product placeholder only.
+
+---
+
+## Persistence
+
+When **`ENV=production`** or **`STRICT_PROPOSAL_PERSISTENCE=1`**, `POST /api/proposal/run` requires Supabase and **`public.proposals`** + **`public.proposal_events`**. `ENV=test` relaxes strict persistence for unit tests.
+
+---
+
+## Code map
+
+| Layer | Path |
+|--------|------|
+| HTTP + pre-pipeline | `api/app/modules/proposal/router.py`, `api/app/workspace/agents.py` |
+| DAG orchestration | `api/app/pipeline/orchestrator.py` |
+| Node trace + cache + summary | `api/app/pipeline/dag_run.py` |
+| Stage implementations | `packages/agents/bidforge_agents/*.py` (including `proposal_dag.py` stage helpers) |
+| Prompts | `packages/prompts/bidforge_prompts/` |
+| Contracts | `packages/schemas/bidforge_schemas/pipeline.py` |
+
+## Web app
+
+The Next.js UI (`apps/web`) calls the same `POST /api/proposal/run` contract as before (`pipeline_mode`, brief text, workspace echo). Copy is aligned with the **five traced nodes**; the browser does not receive per-node traces unless you add a dedicated API for operators. `GET /api/meta/version` field `pipeline` is **`5-node-dag-v1`** for integration checks.

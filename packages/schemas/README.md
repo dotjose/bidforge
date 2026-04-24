@@ -1,3 +1,3 @@
 # bidforge-schemas
 
-Pydantic models shared by `bidforge-agents` and the FastAPI service. All agent boundaries use these types only.
+Shared Pydantic contracts for `bidforge-agents` and the API. See `bidforge_schemas/pipeline.py` and [`docs/agents.md`](../../docs/agents.md).

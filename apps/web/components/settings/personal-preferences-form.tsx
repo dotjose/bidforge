@@ -126,7 +126,7 @@ export function PersonalPreferencesForm() {
       <section className="rounded-2xl border border-border bg-card p-8 shadow-sm">
         <h2 className="font-display text-lg font-semibold text-foreground">Writing style</h2>
         <p className="mt-2 text-base text-muted-foreground">
-          Applied on every run via workspace settings (merged before the pipeline starts).
+          Applied on every run via workspace settings (merged before the five-node proposal graph starts).
         </p>
         {loading ? (
           <p className="mt-4 text-sm text-muted-foreground">Loading saved style…</p>

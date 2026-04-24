@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field
 
 
 class StructuredRequirementItem(BaseModel):
@@ -122,7 +122,7 @@ class StrategyAgentOutput(BaseModel):
     response_tone: str = Field(default="confident, precise, buyer-aligned")
     freelance_hook_strategy: str = Field(
         default="",
-        description="Freelance Win Engine: how to open in 2–3 lines (empty in enterprise-only runs).",
+        description="Job-post path: short positioning for the proposal writer (not opening copy). Empty for enterprise.",
     )
 
 
@@ -159,64 +159,6 @@ class JobUnderstandingOutput(BaseModel):
     )
 
 
-class FreelanceHookOutput(BaseModel):
-    """First lines optimized for reply rate."""
-
-    hook: str = ""
-    trust_signal: str = ""
-    relevance_match: str = Field(default="Medium", description="High | Medium | Low")
-    alternative_hooks: list[str] = Field(
-        default_factory=list,
-        description="Up to two A/B variants for the opening (same job, different angle).",
-    )
-
-    @field_validator("alternative_hooks")
-    @classmethod
-    def _cap_alternatives(cls, v: list[str]) -> list[str]:
-        return [str(x).strip() for x in v if str(x).strip()][:2]
-
-
-class FreelanceProposalOutput(BaseModel):
-    """Short conversion-first proposal (Upwork-style; never RFP section titles)."""
-
-    hook: str = Field(default="", description="1–3 lines; must echo or lightly polish HOOK_TEXT")
-    understanding_need: str = Field(
-        default="",
-        description="3–5 bullets max (plain lines); paraphrase job intent, not a wall of text",
-    )
-    approach: str = Field(default="", description="Very short execution plan; no theory")
-    relevant_experience: str = Field(
-        default="",
-        description="Only relevant proof; cite memory patterns when present",
-    )
-    call_to_action: str = Field(default="", description="One line, low-friction CTA")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _legacy_opening_body_fields(cls, data: Any) -> Any:
-        """Accept older {opening, body, proof, closing} JSON from models or caches."""
-        if not isinstance(data, dict):
-            return data
-        out = dict(data)
-        if not str(out.get("hook", "")).strip() and str(out.get("opening", "")).strip():
-            out["hook"] = str(out["opening"]).strip()
-        if not str(out.get("call_to_action", "")).strip() and str(out.get("closing", "")).strip():
-            out["call_to_action"] = str(out["closing"]).strip()
-        if not str(out.get("relevant_experience", "")).strip() and str(out.get("proof", "")).strip():
-            out["relevant_experience"] = str(out["proof"]).strip()
-        # Legacy shape used `body` for execution copy (maps to approach), not buyer-need bullets.
-        if not str(out.get("approach", "")).strip() and str(out.get("body", "")).strip():
-            out["approach"] = str(out["body"]).strip()
-        return out
-
-    def to_formatter_slots(self) -> tuple[str, str, str, str]:
-        """Map into legacy four slots for verifier shim / PDF keys."""
-        proof_block = "\n\n".join(
-            p for p in (self.approach.strip(), self.relevant_experience.strip()) if p
-        )
-        return (self.hook, self.understanding_need, proof_block, self.call_to_action)
-
-
 class CrossProposalDiffOutput(BaseModel):
     """Compare current proposal against recent stored wins — all lists may be empty on degraded runs."""
 
@@ -226,56 +168,38 @@ class CrossProposalDiffOutput(BaseModel):
     structure_optimization: list[str] = Field(default_factory=list)
 
 
-class ProposalCritiqueOutput(BaseModel):
-    """Mode-aware improvement hints (freelance emphasizes hook + reply delta)."""
+class SolutionBlueprintOutput(BaseModel):
+    """Structured execution plan — ONLY the solution node's blueprint step may author these lists."""
 
-    improvements: list[str] = Field(default_factory=list)
-    reply_probability_delta: str = Field(default="", description="e.g. +12% or -5%")
-    enterprise_gap_summary: str = Field(
-        default="",
-        description="Optional: compliance/structure gaps when in enterprise comparisons.",
+    tasks: list[str] = Field(default_factory=list, description="Concrete execution steps")
+    timeline: list[str] = Field(
+        default_factory=list,
+        description="Phases with timeboxes, e.g. Week 1 → discovery",
     )
-    top1_style_rewrite: str = Field(
-        default="",
-        description="Freelance: optional full bid rewritten in a top-1% reply style (empty for enterprise).",
-    )
+    deliverables: list[str] = Field(default_factory=list, description="Named artifacts the client receives")
 
 
-class ProposalSection(BaseModel):
+PROPOSAL_WRITER_SECTION_ORDER: tuple[str, ...] = (
+    "Overview",
+    "Solution",
+    "Execution Plan",
+    "Timeline",
+    "Deliverables",
+    "Risk Management",
+    "Next Steps",
+)
+
+
+class ProposalWriterSection(BaseModel):
     title: str = ""
     content: str = ""
-    covers_requirements: list[str] = Field(default_factory=list, description="REQ_* refs covered")
-    based_on_memory: list[str] = Field(
-        default_factory=list,
-        description="Memory ids or short labels this section grounded in",
-    )
 
 
-class ProposalAgentOutput(BaseModel):
-    """Section-first draft; formatter normalizes to canonical four fields."""
+class ProposalWriterOutput(BaseModel):
+    """Single-writer final proposal contract (DAG phase 4)."""
 
-    sections: list[ProposalSection] = Field(default_factory=list)
-
-
-class TimelinePhase(BaseModel):
-    phase: str = ""
-    duration: str = ""
-
-
-class TimelineAgentOutput(BaseModel):
-    """Deterministic timeline normalization (no LLM)."""
-
-    timeline: list[TimelinePhase] = Field(default_factory=list)
-
-
-class FormatterAgentOutput(BaseModel):
-    """Normalized proposal body — same section keys, cleaned copy."""
-
-    executive_summary: str = ""
-    technical_approach: str = ""
-    delivery_plan: str = ""
-    risk_management: str = ""
-    format_notes: list[str] = Field(default_factory=list)
+    title: str = Field(default="", description="Derived from blueprint + strategy, not generic product title.")
+    sections: list[ProposalWriterSection] = Field(default_factory=list)
 
 
 class VerifierAgentOutput(BaseModel):

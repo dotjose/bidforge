@@ -2,6 +2,7 @@
 
 import { ClerkProvider } from "@clerk/nextjs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BidForgeAppToaster } from "@/components/bidforge-app-toaster";
 import { AppThemeProvider } from "@/components/theme-provider";
 import { useState } from "react";
 
@@ -24,7 +25,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
         storageKey="bidforge-theme"
         disableTransitionOnChange
       >
-        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        <QueryClientProvider client={queryClient}>
+          {children}
+          <BidForgeAppToaster />
+        </QueryClientProvider>
       </AppThemeProvider>
     </ClerkProvider>
   );

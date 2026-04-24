@@ -1,11 +1,5 @@
 import { create } from "zustand";
-import type {
-  CrossProposalDiffPayload,
-  MemorySummary,
-  ProposalSections,
-  SectionAttribution,
-  TimelinePhase,
-} from "@bidforge/web-sdk";
+import type { ProposalPublicRunResponse, ProposalSections } from "@bidforge/web-sdk";
 import type { ScoreBreakdown } from "@/components/bidforge/score-panel";
 
 export type BrainMode = "auto" | "enterprise" | "freelance";
@@ -13,29 +7,17 @@ export type BrainMode = "auto" | "enterprise" | "freelance";
 type ProposalDraft = {
   jobDescription: string;
   brainMode: BrainMode;
+  /** Markdown built only from the public run contract (Proposal tab). */
   generated: string;
   score: number | null;
   issues: string[];
-  suggestions: string[];
   scoreBreakdown: ScoreBreakdown | null;
   traceId: string | null;
-  memoryGrounded: boolean | null;
-  groundingWarning: string | null;
-  memorySummary: MemorySummary | null;
-  sectionAttributions: SectionAttribution[] | null;
-  timeline: TimelinePhase[];
-  proposalSections: ProposalSections | null;
-  lastPipelineMode: "enterprise" | "freelance" | null;
-  replyLikelihood0_100: number | null;
-  lastCritique: {
-    improvements: string[];
-    reply_probability_delta?: string;
-    top1_style_rewrite?: string;
-  } | null;
-  lastHook: string | null;
+  memoryUsed: boolean | null;
   proposalTitle: string | null;
   persistedRunId: string | null;
-  crossProposalDiff: CrossProposalDiffPayload | null;
+  executiveSummary: string;
+  proposalSections: ProposalSections | null;
 };
 
 type ProposalState = ProposalDraft & {
@@ -43,29 +25,11 @@ type ProposalState = ProposalDraft & {
   setBrainMode: (value: BrainMode) => void;
   setProposalTitle: (value: string | null) => void;
   setResult: (payload: {
-    generated: string;
-    score: number | null;
-    issues: string[];
-    suggestions: string[];
+    run: ProposalPublicRunResponse;
+    generatedMarkdown: string;
+    proposalSections: ProposalSections | null;
     scoreBreakdown: ScoreBreakdown;
     traceId?: string | null;
-    memoryGrounded?: boolean | null;
-    groundingWarning?: string | null;
-    memorySummary?: MemorySummary | null;
-    sectionAttributions?: SectionAttribution[] | null;
-    timeline?: TimelinePhase[];
-    proposalSections?: ProposalSections | null;
-    lastPipelineMode?: "enterprise" | "freelance" | null;
-    replyLikelihood0_100?: number | null;
-    lastCritique?: {
-      improvements: string[];
-      reply_probability_delta?: string;
-      top1_style_rewrite?: string;
-    } | null;
-    lastHook?: string | null;
-    proposalTitle?: string | null;
-    persistedRunId?: string | null;
-    crossProposalDiff?: CrossProposalDiffPayload | null;
   }) => void;
   reset: () => void;
 };
@@ -76,22 +40,13 @@ const initial: ProposalDraft = {
   generated: "",
   score: null,
   issues: [],
-  suggestions: [],
   scoreBreakdown: null,
   traceId: null,
-  memoryGrounded: null,
-  groundingWarning: null,
-  memorySummary: null,
-  sectionAttributions: null,
-  timeline: [],
-  proposalSections: null,
-  lastPipelineMode: null,
-  replyLikelihood0_100: null,
-  lastCritique: null,
-  lastHook: null,
+  memoryUsed: null,
   proposalTitle: null,
   persistedRunId: null,
-  crossProposalDiff: null,
+  executiveSummary: "",
+  proposalSections: null,
 };
 
 export const useProposalStore = create<ProposalState>((set) => ({
@@ -100,46 +55,23 @@ export const useProposalStore = create<ProposalState>((set) => ({
   setBrainMode: (brainMode) => set({ brainMode }),
   setProposalTitle: (proposalTitle) => set({ proposalTitle }),
   setResult: ({
-    generated,
-    score,
-    issues,
-    suggestions,
+    run,
+    generatedMarkdown,
+    proposalSections,
     scoreBreakdown,
     traceId,
-    memoryGrounded,
-    groundingWarning,
-    memorySummary,
-    sectionAttributions,
-    timeline,
-    proposalSections,
-    lastPipelineMode,
-    replyLikelihood0_100,
-    lastCritique,
-    lastHook,
-    proposalTitle,
-    persistedRunId,
-    crossProposalDiff,
   }) =>
     set({
-      generated,
-      score,
-      issues,
-      suggestions,
+      generated: generatedMarkdown,
+      score: run.score,
+      issues: run.issues,
       scoreBreakdown,
-      traceId: traceId ?? null,
-      memoryGrounded: memoryGrounded ?? null,
-      groundingWarning: groundingWarning ?? null,
-      memorySummary: memorySummary ?? null,
-      sectionAttributions: sectionAttributions ?? null,
-      timeline: timeline ?? [],
-      proposalSections: proposalSections ?? null,
-      lastPipelineMode: lastPipelineMode ?? null,
-      replyLikelihood0_100: replyLikelihood0_100 ?? null,
-      lastCritique: lastCritique ?? null,
-      lastHook: lastHook ?? null,
-      proposalTitle: proposalTitle ?? null,
-      persistedRunId: persistedRunId ?? null,
-      crossProposalDiff: crossProposalDiff ?? null,
+      traceId: traceId ?? run.proposal_id,
+      memoryUsed: run.memory_used,
+      proposalTitle: run.title?.trim() ? run.title.trim() : null,
+      persistedRunId: run.proposal_id?.trim() ? run.proposal_id.trim() : null,
+      executiveSummary: run.executive_summary ?? "",
+      proposalSections,
     }),
   reset: () => set(initial),
 }));

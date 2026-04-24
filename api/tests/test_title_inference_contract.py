@@ -11,5 +11,5 @@ def test_react_fastapi_job_title_is_compressed_not_raw_echo() -> None:
     assert len(t) >= 8
 
 
-def test_empty_brief_falls_back_to_untitled() -> None:
-    assert infer_proposal_title("", pipeline_mode="enterprise") == "Untitled proposal"
+def test_empty_brief_falls_back_to_neutral_placeholder() -> None:
+    assert infer_proposal_title("", pipeline_mode="enterprise") == "Proposal from your brief"

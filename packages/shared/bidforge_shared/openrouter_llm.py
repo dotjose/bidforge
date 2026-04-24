@@ -7,7 +7,7 @@ import random
 import time
 from typing import Any, TypeVar
 
-from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 from pydantic import BaseModel, ValidationError
 
 from bidforge_shared.errors import LLMTransportError, PipelineStepError
@@ -51,6 +51,18 @@ class OpenRouterLLM:
         self.last_model_name: str | None = None
         self.last_usage: dict[str, int] | None = None
 
+    @staticmethod
+    def _usage_to_dict(usage: Any) -> dict[str, int]:
+        """Chat and embedding responses differ; embeddings often omit completion_tokens."""
+        if usage is None:
+            return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        ct = int(getattr(usage, "completion_tokens", 0) or 0)
+        tt = int(getattr(usage, "total_tokens", 0) or 0)
+        if tt == 0 and (pt or ct):
+            tt = pt + ct
+        return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt}
+
     def _sleep_backoff(self, attempt: int) -> None:
         base = 0.4 * (2**attempt)
         jitter = random.uniform(0, 0.25)
@@ -75,6 +87,10 @@ class OpenRouterLLM:
                 if attempt + 1 < self._max_retries:
                     self._sleep_backoff(attempt)
                 continue
+            except APIStatusError as e:
+                if getattr(e, "status_code", None) == 404:
+                    raise LLMTransportError(step, f"OpenRouter 404 for model={model!r}") from e
+                raise LLMTransportError(step, str(e)) from e
             except Exception as e:  # noqa: BLE001
                 raise LLMTransportError(step, str(e)) from e
 
@@ -145,10 +161,6 @@ class OpenRouterLLM:
             raise LLMTransportError("embedding", str(e)) from e
         vec = resp.data[0].embedding
         self.last_model_name = self._embedding_model
-        if resp.usage is not None:
-            self.last_usage = {
-                "prompt_tokens": int(resp.usage.prompt_tokens or 0),
-                "completion_tokens": int(resp.usage.completion_tokens or 0),
-                "total_tokens": int(resp.usage.total_tokens or 0),
-            }
+        usage = self._usage_to_dict(resp.usage)
+        self.last_usage = usage if any(usage.values()) else None
         return list(vec)

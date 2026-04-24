@@ -54,7 +54,7 @@ export default function WorkspaceSettingsPage() {
         <section className="mt-16 pb-8">
           <h2 className="font-display text-lg font-semibold text-foreground">Retrieval &amp; memory</h2>
           <p className="mt-2 text-base text-muted-foreground">
-            Controls which indexed libraries the pipeline may query for this workspace. When retrieval is off,
+            Controls which indexed libraries a proposal run may query for this workspace. When retrieval is off,
             drafts still complete using the brief alone.
           </p>
           <div className="mt-8 rounded-2xl border border-border bg-card p-8 shadow-sm">

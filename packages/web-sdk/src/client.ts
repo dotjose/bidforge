@@ -3,17 +3,32 @@ import {
   ApiErrorEnvelope,
   ApiVersionResponse,
   BidForgeApiError,
+  MemoryPatternItem,
   NormalizedDocumentOutput,
-  ProposalRunDetail,
-  ProposalRunResponse,
+  ProposalPublicRunResponse,
   ProposalRunSummary,
+  ProposalSavedRunPublic,
   ProposalWorkspaceInput,
   WorkspaceSettingsResponse,
   WorkspaceSettingsUpdate,
 } from "./types";
 
+/** Default for routine API calls (settings, version, etc.). */
 const DEFAULT_TIMEOUT_MS = 125_000;
 const DEFAULT_RETRIES = 2;
+
+/**
+ * Browser `fetch` deadline for `POST /api/proposal/run`.
+ * Must exceed the API's `pipeline_timeout_s` (see `/api/version`) plus network slack, or the
+ * client aborts with `TIMEOUT` / "Request timed out waiting for the API." while the server is still working.
+ */
+export function proposalRunFetchTimeoutMs(pipelineTimeoutSeconds: number): number {
+  const s = Number(pipelineTimeoutSeconds);
+  if (!Number.isFinite(s) || s <= 0) {
+    return 720_000;
+  }
+  return Math.ceil(Math.max(180, s + 120) * 1000);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -81,7 +96,11 @@ export class BidForgeClient {
     /** Merged into workspace state before settings injection (optional). */
     workspace?: ProposalWorkspaceInput;
     draftIntensity?: "balanced" | "strong" | "weak";
-  }): Promise<ProposalRunResponse> {
+    /** Prior saved run id for incremental pipeline_state chaining. */
+    continuationRunId?: string;
+    /** User-saved pattern / cues appended to the generation brief (server-truncated). */
+    learningSnippet?: string;
+  }): Promise<ProposalPublicRunResponse> {
     const body: Record<string, unknown> = {
       rfp: input.rfp,
       rfp_id: input.rfpId,
@@ -89,11 +108,21 @@ export class BidForgeClient {
       draft_intensity: input.draftIntensity ?? "balanced",
     };
     if (input.workspace) body.workspace = input.workspace;
+    if (input.continuationRunId?.trim()) body.continuation_run_id = input.continuationRunId.trim();
+    if (input.learningSnippet?.trim()) body.learning_snippet = input.learningSnippet.trim();
     const res = await this.request("POST", "/api/proposal/run", body, {
       auth: true,
       retries: this.maxRetries,
     });
-    return res as ProposalRunResponse;
+    return res as ProposalPublicRunResponse;
+  }
+
+  async listMemoryPatterns(): Promise<MemoryPatternItem[]> {
+    const res = await this.request("GET", "/api/proposal/memory/patterns", undefined, {
+      auth: true,
+      retries: 0,
+    });
+    return res as MemoryPatternItem[];
   }
 
   async getWorkspaceSettings(): Promise<WorkspaceSettingsResponse> {
@@ -290,14 +319,45 @@ export class BidForgeClient {
     return res as ProposalRunSummary[];
   }
 
-  async getProposalRun(runId: string): Promise<ProposalRunDetail> {
+  /** Top-level hydration alias (same rows as ``listProposalRuns``). */
+  async listProposalsForHydration(): Promise<ProposalRunSummary[]> {
+    const res = await this.request("GET", "/api/proposals", undefined, {
+      auth: true,
+      retries: 0,
+    });
+    return res as ProposalRunSummary[];
+  }
+
+  /** Top-level hydration alias (same payload as ``getWorkspaceSettings``). */
+  async getSettingsForHydration(): Promise<WorkspaceSettingsResponse> {
+    const res = await this.request("GET", "/api/settings", undefined, {
+      auth: true,
+      retries: 0,
+    });
+    return res as WorkspaceSettingsResponse;
+  }
+
+  async postProposalPattern(input: {
+    proposalId: string;
+    pattern: "strong" | "weak" | "saved";
+  }): Promise<{ status: string; proposal_id: string; pattern: string }> {
+    const res = await this.request(
+      "POST",
+      "/api/proposal/pattern",
+      { proposalId: input.proposalId, pattern: input.pattern },
+      { auth: true, retries: 0 },
+    );
+    return res as { status: string; proposal_id: string; pattern: string };
+  }
+
+  async getProposalRun(runId: string): Promise<ProposalSavedRunPublic> {
     const res = await this.request(
       "GET",
       `/api/proposal/runs/${encodeURIComponent(runId)}`,
       undefined,
       { auth: true, retries: 0 },
     );
-    return res as ProposalRunDetail;
+    return res as ProposalSavedRunPublic;
   }
 
   private async request(

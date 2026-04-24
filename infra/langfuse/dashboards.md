@@ -19,7 +19,7 @@ BidForge emits **trace-level metadata** and **numeric scores** from the `api/` s
 | **success_rate** | Ratio of traces where `metadata.status` = `completed` vs all `proposal_run` traces in the window. |
 | **failure_rate** | Traces with `metadata.status` = `failed` or `metadata.trace_status` = `failed` (same window). |
 | **avg_latency** | Average of score **`pipeline_latency`** (ms) for completed runs. |
-| **failures_by_agent** | Break down failed traces by `metadata.failed_step` (values align with span names: `requirement_agent`, `rag_retrieval`, etc.). |
+| **failures_by_agent** | Break down failed traces by `metadata.failed_step` (DAG nodes: `router`, `job_intel`, `solution`, `proposal`, `verifier`; plus infra steps like `supabase_persist` / `proposal_events`). |
 
 **Suggested widgets:** time-series for success/failure counts, table for top `failed_step`, histogram of `pipeline_latency`.
 

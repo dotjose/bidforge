@@ -10,7 +10,14 @@ from bidforge_schemas import RagContext
 from bidforge_shared import OpenRouterLLM
 
 from app.core.config import settings
+from app.integrations.postgrest_errors import (
+    column_missing_log_suffix,
+    is_column_missing_error,
+    is_missing_relation_error,
+    missing_relation_log_suffix,
+)
 from app.integrations.supabase import get_supabase_client
+from app.integrations.supabase_tables import T_USERS, fq
 
 if TYPE_CHECKING:
     pass
@@ -18,28 +25,40 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _users_pk_column() -> str:
+    c = (settings.supabase_users_pk_column or "id").strip()
+    return c if c else "id"
+
+
 def _resolve_internal_user_id(clerk_user_id: str) -> UUID | None:
-    """Map Clerk id → tenant uuid using only `public.users.id` (vector RPC expects uuid `filter_user_id`)."""
+    """Map Clerk id → tenant uuid using `public.users` PK (see SUPABASE_USERS_PK_COLUMN)."""
     sb = get_supabase_client()
     if sb is None or not clerk_user_id:
         return None
+    pk = _users_pk_column()
     try:
-        r = sb.table("users").select("id").eq("clerk_user_id", clerk_user_id).limit(1).execute()
+        r = sb.table(T_USERS).select(pk).eq("clerk_user_id", clerk_user_id).limit(1).execute()
     except Exception as e:  # noqa: BLE001
-        log.warning("users lookup failed: %s", e)
+        msg = f"users lookup {fq(T_USERS)} failed: {e}"
+        if is_missing_relation_error(e):
+            log.warning("%s%s", msg, missing_relation_log_suffix(e))
+        elif is_column_missing_error(e):
+            log.warning("%s%s", msg, column_missing_log_suffix(e))
+        else:
+            log.warning("%s", msg)
         return None
     rows = getattr(r, "data", None) or []
     if not rows or not isinstance(rows[0], dict):
         return None
     row = rows[0]
-    raw = row.get("id")
+    raw = row.get(pk)
     if raw is None:
-        log.warning("users row missing id for clerk_user_id=%r", clerk_user_id[:32])
+        log.warning("users row missing %s for clerk_user_id=%r", pk, clerk_user_id[:32])
         return None
     try:
         return UUID(str(raw))
     except (ValueError, TypeError):
-        log.warning("users.id is not a valid uuid: %r", raw)
+        log.warning("users.%s is not a valid uuid: %r", pk, raw)
         return None
 
 

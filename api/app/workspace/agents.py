@@ -127,6 +127,7 @@ def run_settings_injector_agent(ws: WorkspaceState, clerk_user_id: str) -> Works
     if row:
         db.tone = str(row.get("tone") or "")[:4000]
         db.writing_style = str(row.get("writing_style") or "")[:8000]
+        db.openrouter_model_primary = str(row.get("openrouter_model_primary") or "").strip()[:200]
         if isinstance(row.get("company_profile"), dict):
             db.company_profile = dict(row["company_profile"])
         if isinstance(row.get("rag_config"), dict):
@@ -139,10 +140,22 @@ def run_settings_injector_agent(ws: WorkspaceState, clerk_user_id: str) -> Works
                 db.proposal_mode = pm  # type: ignore[assignment]
     ins = ws.settings
     merged_cp = {**db.company_profile, **ins.company_profile}
-    rag_out = db.rag if ins.rag == RagConfig() else ins.rag
+    # Merge RAG flags: use DB as baseline; any field on `ins.rag` that differs from
+    # schema defaults is treated as an explicit overlay (e.g. per-run / UI toggle).
+    d_def = RagConfig().model_dump()
+    d_ins = ins.rag.model_dump()
+    d_db = db.rag.model_dump()
+    rag_fields: dict[str, bool] = {}
+    for k in ("enabled", "enterprise_case_studies", "freelance_win_memory"):
+        iv, dv, dbv = bool(d_ins[k]), bool(d_def[k]), bool(d_db[k])
+        rag_fields[k] = iv if iv != dv else dbv
+    rag_out = RagConfig(**rag_fields)
+    om_ins = ins.openrouter_model_primary.strip()[:200]
+    om_out = om_ins or db.openrouter_model_primary.strip()[:200]
     out = WorkspaceSettings(
         tone=(ins.tone.strip() or db.tone)[:4000],
         writing_style=(ins.writing_style.strip() or db.writing_style)[:8000],
+        openrouter_model_primary=om_out,
         proposal_mode=ins.proposal_mode if ins.proposal_mode != "auto" else db.proposal_mode,
         company_profile=merged_cp,
         rag=rag_out,
@@ -162,10 +175,19 @@ def workspace_preferences_block(ws: WorkspaceState) -> str:
     """Serialized settings for enterprise strategy/proposal prompts."""
     s = ws.settings
     parts = []
+    pm = str(s.proposal_mode or "").strip().lower()
+    if pm in ("enterprise", "freelance", "auto"):
+        parts.append(f"Workspace proposal mode: {pm}")
     if s.tone.strip():
         parts.append(f"Tone: {s.tone.strip()}")
     if s.writing_style.strip():
         parts.append(f"Writing style: {s.writing_style.strip()}")
+    rc = s.rag
+    parts.append(
+        "Retrieval preferences: "
+        f"rag_enabled={rc.enabled}; enterprise_case_studies={rc.enterprise_case_studies}; "
+        f"freelance_win_memory={rc.freelance_win_memory}"
+    )
     if s.company_profile:
         parts.append("Company profile (JSON):\n" + json.dumps(s.company_profile, ensure_ascii=False)[:6000])
     return "\n".join(parts).strip()

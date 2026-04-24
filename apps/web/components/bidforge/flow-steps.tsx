@@ -40,7 +40,7 @@ export function FlowSteps({ steps, className }: FlowStepsProps) {
                     {item.step}
                   </span>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Stage {item.step}
+                    Step {item.step}
                   </span>
                 </div>
                 <h3 className="mt-5 font-display text-lg font-semibold tracking-[-0.02em] text-foreground">

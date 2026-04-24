@@ -49,26 +49,26 @@ const problemCards = [
 ] as const;
 
 const solutionBlocks = [
-  { title: "Extract RFP structure", icon: Brain },
-  { title: "Generate proposal drafts", icon: PenTool },
-  { title: "Surface submission risks", icon: ShieldCheck },
+  { title: "Route every brief", icon: Brain },
+  { title: "One writer, one pass", icon: PenTool },
+  { title: "Verify before you ship", icon: ShieldCheck },
 ] as const;
 
 const workflowSteps = [
   {
-    label: "Ingest",
+    label: "Understand",
     icon: Download,
-    line: "Source material lands in one place.",
+    line: "Job or RFP intelligence plus optional memory retrieval.",
   },
   {
-    label: "Structure",
+    label: "Design",
     icon: Blocks,
-    line: "Outline sections before anyone writes.",
+    line: "Solution blueprint and positioning before prose.",
   },
   {
-    label: "Generate",
+    label: "Draft + check",
     icon: Cog,
-    line: "Draft against the outline—not blank pages.",
+    line: "Single proposal write, then automated verification.",
   },
 ] as const;
 

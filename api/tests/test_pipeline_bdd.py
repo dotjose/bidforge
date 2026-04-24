@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 import pytest
-from bidforge_agents import run_requirement_agent
+from bidforge_agents import run_job_intel_extract
 from bidforge_shared import OpenRouterLLM, PipelineStepError
 
 from app.pipeline.errors import FailedPipeline
@@ -21,6 +21,11 @@ def test_proposal_pipeline_happy_path(sample_rfp: str) -> None:
     assert result["score"] > 70
     assert "proposal" in result
     assert "sections" in result["proposal"]
+    sp = result["proposal"]["sections"]
+    if isinstance(sp, list):
+        assert any(str(s.get("content") or "").strip() for s in sp if isinstance(s, dict))
+    else:
+        assert isinstance(sp, dict)
     assert "timeline" in result and isinstance(result["timeline"], list)
     assert "memory_used" in result and isinstance(result["memory_used"], dict)
     assert result["trace_id"]
@@ -45,12 +50,12 @@ def test_broken_rfp_empty_after_strip_raises() -> None:
     llm = stub_llm_happy_path()
     with pytest.raises(FailedPipeline) as exc:
         execute_proposal_pipeline("   \n\t  ", "test-user", llm=llm)
-    assert exc.value.failed_step == "requirement_agent"
+    assert exc.value.failed_step == "job_intel__extract"
 
 
-def test_requirement_agent_rejects_empty() -> None:
+def test_job_intel_extract_rejects_empty() -> None:
     with pytest.raises(PipelineStepError):
-        run_requirement_agent("", stub_llm_happy_path())
+        run_job_intel_extract("", stub_llm_happy_path())
 
 
 @pytest.mark.integration
@@ -64,4 +69,8 @@ def test_live_openrouter_pipeline_when_configured(sample_rfp: str) -> None:
     llm = OpenRouterLLM(api_key=key, primary_model=primary, fallback_model=fallback)
     result = execute_proposal_pipeline(sample_rfp, "integration-user", llm=llm)
     assert result["score"] >= 0
-    assert result["proposal"]["sections"]["executive_summary"]
+    sp = result["proposal"]["sections"]
+    if isinstance(sp, list):
+        assert any(str(s.get("content") or "").strip() for s in sp if isinstance(s, dict))
+    else:
+        assert sp.get("executive_summary") or sp.get("opening")

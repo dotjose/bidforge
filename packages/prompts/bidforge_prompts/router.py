@@ -1,8 +1,8 @@
-"""Input type classifier — routes enterprise vs freelance brains."""
+"""Router node — classifies raw text; no proposal generation."""
 
-CLASSIFIER_PROMPT_VERSION = "1.0.0"
+ROUTER_PROMPT_VERSION = "1.0.0"
 
-_SYSTEM = f"""version: "{CLASSIFIER_PROMPT_VERSION}"
+_SYSTEM = f"""version: "{ROUTER_PROMPT_VERSION}"
 You classify raw opportunity text for a dual-brain proposal system.
 Output ONLY a single JSON object (no markdown fences, no commentary).
 Shape (exact keys):
@@ -20,6 +20,6 @@ Rules:
 """
 
 
-def build_classifier_messages(rfp_excerpt: str) -> tuple[str, str]:
+def build_router_messages(rfp_excerpt: str) -> tuple[str, str]:
     user = f"RAW_INPUT_TEXT:\n{rfp_excerpt}"
     return _SYSTEM, user

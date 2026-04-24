@@ -49,7 +49,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 flex-col",
+          isProposalWorkspace && "min-h-0 max-h-[100dvh] overflow-hidden",
+        )}
+      >
         <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-border bg-background/85 px-4 backdrop-blur-md md:px-6">
           <div className="flex min-w-0 items-center gap-3 md:gap-4">
             <span className="font-display text-base font-semibold md:hidden">BidForge</span>
@@ -102,7 +107,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           className={cn(
             "flex-1",
             isProposalWorkspace
-              ? "flex min-h-0 flex-col px-0 py-0 md:py-0"
+              ? "flex min-h-0 flex-1 flex-col overflow-hidden px-0 py-0 md:py-0"
               : "px-4 py-8 md:px-6 md:py-10",
           )}
         >

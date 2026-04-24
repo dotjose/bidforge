@@ -6,21 +6,16 @@ os.environ.setdefault("ENV", "test")
 os.environ.setdefault("RATE_LIMIT_PER_MINUTE", "0")
 os.environ.setdefault("SKIP_AUTH", "1")
 os.environ.setdefault("REQUIRE_RAG_MEMORY", "false")
-
 import pytest
 from bidforge_schemas import (
-    CrossProposalDiffOutput,
-    FormatterAgentOutput,
-    FreelanceHookOutput,
-    FreelanceProposalOutput,
     InputClassifierOutput,
     JobUnderstandingOutput,
-    ProposalAgentOutput,
-    ProposalCritiqueOutput,
-    ProposalSection,
+    ProposalWriterOutput,
+    ProposalWriterSection,
     RequirementAgentOutput,
     RequirementRow,
     RequirementStructuringOutput,
+    SolutionBlueprintOutput,
     StrategyAgentOutput,
     VerifierAgentOutput,
 )
@@ -39,7 +34,7 @@ def sample_rfp() -> str:
 def stub_llm_happy_path() -> StubLLM:
     llm = StubLLM()
     llm.register(
-        "input_classifier",
+        "router",
         InputClassifierOutput(
             input_type="rfp",
             recommended_pipeline="enterprise",
@@ -47,7 +42,7 @@ def stub_llm_happy_path() -> StubLLM:
         ),
     )
     llm.register(
-        "requirement_agent",
+        "job_intel__extract",
         RequirementAgentOutput(
             requirements=["Meet Section 4.2 with mapped acceptance tests", "EU data residency"],
             constraints=["Response due March 1", "Max 40 pages"],
@@ -56,7 +51,7 @@ def stub_llm_happy_path() -> StubLLM:
         ),
     )
     llm.register(
-        "requirement_structuring",
+        "job_intel__matrix",
         RequirementStructuringOutput(
             requirements=[
                 RequirementRow(
@@ -77,7 +72,29 @@ def stub_llm_happy_path() -> StubLLM:
         ),
     )
     llm.register(
-        "strategy_agent",
+        "solution__blueprint",
+        SolutionBlueprintOutput(
+            tasks=[
+                "Map EU data flows to REQ_1 acceptance tests",
+                "Stand up SOC 2 control evidence pack",
+                "Deliver phased rollout with rollback gates",
+                "Run weekly steering with RAID transparency",
+            ],
+            timeline=[
+                "Week 1 — discovery + residency mapping",
+                "Week 2 — integration slice + automated tests",
+                "Week 3 — pilot hardening + handover",
+            ],
+            deliverables=[
+                "Control matrix workbook",
+                "Deployed platform baseline in EU region",
+                "Rollback-tested release notes",
+                "Training deck + operator runbook",
+            ],
+        ),
+    )
+    llm.register(
+        "solution__strategy",
         StrategyAgentOutput(
             strategy="Grounded in past EU SOC 2 wins and delivery cadence patterns.",
             based_on=["mem-gov-001", "pattern-delivery-2"],
@@ -89,48 +106,58 @@ def stub_llm_happy_path() -> StubLLM:
         ),
     )
     llm.register(
-        "proposal_agent",
-        ProposalAgentOutput(
+        "proposal",
+        ProposalWriterOutput(
+            title="EU SOC 2 aligned delivery with Postgres-backed checkpoints",
             sections=[
-                ProposalSection(
-                    title="Executive summary",
-                    content="We meet EU residency and SOC 2 expectations while delivering Section 4.2 milestones.",
-                    covers_requirements=["REQ_1", "REQ_2"],
-                    based_on_memory=["mem-gov-001"],
+                ProposalWriterSection(
+                    title="Overview",
+                    content=(
+                        "You need EU residency plus SOC 2 evidence that buyers trust; we anchor on shipped "
+                        "Postgres audit patterns and Jira-tracked RAID cadence."
+                    ),
                 ),
-                ProposalSection(
-                    title="Technical approach",
-                    content="Phased rollout with rollback gates per acceptance mapping.",
-                    covers_requirements=["REQ_1"],
-                    based_on_memory=["pattern-delivery-2"],
+                ProposalWriterSection(
+                    title="Solution",
+                    content="Phased delivery ties your REQ_1 matrix to integration slices with automated verification in AWS.",
                 ),
-                ProposalSection(
-                    title="Delivery plan",
-                    content="Weekly checkpoints, steering forum, transparent RAID log.",
-                    covers_requirements=["REQ_1"],
-                    based_on_memory=["pattern-delivery-2"],
+                ProposalWriterSection(
+                    title="Execution Plan",
+                    content=(
+                        "- Map EU data flows to REQ_1 acceptance tests using Postgres-backed fixtures\n"
+                        "- Stand up SOC 2 control evidence pack with git-based change history\n"
+                        "- Deliver phased rollout with rollback gates monitored via FastAPI health checks\n"
+                        "- Run weekly steering with RAID transparency documented in Jira"
+                    ),
                 ),
-                ProposalSection(
-                    title="Risk management",
-                    content="Residual regulatory change managed via change control and legal review.",
-                    covers_requirements=["REQ_2"],
-                    based_on_memory=["mem-gov-001"],
+                ProposalWriterSection(
+                    title="Timeline",
+                    content=(
+                        "Week 1 — discovery + residency mapping\n"
+                        "Week 2 — AWS integration slice + automated tests\n"
+                        "Week 3 — pilot hardening + handover"
+                    ),
+                ),
+                ProposalWriterSection(
+                    title="Deliverables",
+                    content=(
+                        "Control matrix workbook, PostgreSQL migration pack, rollback-tested release notes, "
+                        "and operator training deck with acceptance criteria."
+                    ),
+                ),
+                ProposalWriterSection(
+                    title="Risk Management",
+                    content="Residual regulatory change managed via staged rollouts and explicit legal review gates.",
+                ),
+                ProposalWriterSection(
+                    title="Next Steps",
+                    content="Book a 30-minute architecture alignment this week.",
                 ),
             ],
         ),
     )
     llm.register(
-        "formatter_agent",
-        FormatterAgentOutput(
-            executive_summary="We meet EU residency and SOC 2 expectations while delivering Section 4.2 milestones.",
-            technical_approach="Phased rollout with rollback gates per acceptance mapping.",
-            delivery_plan="Weekly checkpoints, steering forum, transparent RAID log.",
-            risk_management="Residual regulatory change managed via change control and legal review.",
-            format_notes=["Normalized tone", "Tightened section balance"],
-        ),
-    )
-    llm.register(
-        "verifier_agent",
+        "verifier",
         VerifierAgentOutput(
             score=82,
             issues=[],
@@ -139,31 +166,13 @@ def stub_llm_happy_path() -> StubLLM:
             weak_claims=[],
         ),
     )
-    llm.register(
-        "critique_agent",
-        ProposalCritiqueOutput(
-            improvements=["Tighten executive summary proof points"],
-            reply_probability_delta="",
-            enterprise_gap_summary="Minor compliance mapping gaps in delivery section.",
-            top1_style_rewrite="",
-        ),
-    )
-    llm.register(
-        "cross_proposal_diff_agent",
-        CrossProposalDiffOutput(
-            stronger_hooks=["Lead with EU + SOC 2 proof in one line"],
-            missing_signals=["Explicit acceptance-test mapping for REQ_1"],
-            better_cta=["Offer a 30-minute compliance alignment call"],
-            structure_optimization=["Keep risk section tied to named controls"],
-        ),
-    )
     return llm
 
 
 def stub_llm_freelance_happy_path() -> StubLLM:
     llm = StubLLM()
     llm.register(
-        "input_classifier",
+        "router",
         InputClassifierOutput(
             input_type="upwork",
             recommended_pipeline="freelance",
@@ -171,7 +180,7 @@ def stub_llm_freelance_happy_path() -> StubLLM:
         ),
     )
     llm.register(
-        "job_understanding_agent",
+        "job_intel__signals",
         JobUnderstandingOutput(
             explicit_requirements=["Python", "FastAPI"],
             implicit_requirements=["wants low risk", "wants senior engineer"],
@@ -186,7 +195,28 @@ def stub_llm_freelance_happy_path() -> StubLLM:
         ),
     )
     llm.register(
-        "strategy_agent_freelance",
+        "solution__blueprint",
+        SolutionBlueprintOutput(
+            tasks=[
+                "Map FastAPI routes for LLM endpoints",
+                "Add structured logging + eval harness",
+                "Ship RAG retrieval with pgvector",
+                "Wire OpenAI JSON mode for stable outputs",
+            ],
+            timeline=[
+                "Week 1 — repo audit + API contract",
+                "Week 2 — vertical slice + tests",
+                "Week 3 — hardening + handoff",
+            ],
+            deliverables=[
+                "Working FastAPI service",
+                "Eval notebook + fixtures",
+                "Deployment checklist",
+            ],
+        ),
+    )
+    llm.register(
+        "solution__strategy_job",
         StrategyAgentOutput(
             strategy="Lead with shipped AI automation; anchor to win memory.",
             based_on=["win-1"],
@@ -194,32 +224,65 @@ def stub_llm_freelance_happy_path() -> StubLLM:
             win_themes=["Speed", "Proof"],
             differentiators=["Similar builds", "Clear comms"],
             response_tone="direct, warm, expert",
-            freelance_hook_strategy="Open with one-line outcome, then stack proof tease.",
+            freelance_hook_strategy="Emphasize shipped FastAPI + eval proof; concise tone.",
         ),
     )
     llm.register(
-        "freelance_hook_agent",
-        FreelanceHookOutput(
-            hook="I've shipped similar AI pipelines that cut manual ops ~60% in two weeks.",
-            trust_signal="SaaS + LLM integrations (FastAPI, OpenAI, vector RAG)",
-            relevance_match="High",
-            alternative_hooks=[
-                "If speed matters most: I can deliver a working FastAPI + RAG slice in 48h with logged evals.",
+        "proposal",
+        ProposalWriterOutput(
+            title="FastAPI LLM integration with pgvector and eval harness",
+            sections=[
+                ProposalWriterSection(
+                    title="Overview",
+                    content=(
+                        "You need FastAPI + LLM glue with low rework risk; I lead with a shipped slice, "
+                        "Postgres-backed evals, and async updates that respect your timeline."
+                    ),
+                ),
+                ProposalWriterSection(
+                    title="Solution",
+                    content="Discovery-first vertical slice with pgvector retrieval and OpenAI JSON-mode clients on AWS.",
+                ),
+                ProposalWriterSection(
+                    title="Execution Plan",
+                    content=(
+                        "- Map FastAPI routes for LLM endpoints with pytest coverage in CI\n"
+                        "- Add structured logging + Postgres-backed eval harness\n"
+                        "- Ship RAG retrieval with pgvector using OpenAI embeddings API\n"
+                        "- Wire OpenAI JSON mode for stable outputs with Slack alerts on regressions"
+                    ),
+                ),
+                ProposalWriterSection(
+                    title="Timeline",
+                    content=(
+                        "Week 1 — repo audit + API contract\n"
+                        "Week 2 — RAG slice + eval harness\n"
+                        "Week 3 — hardening + handoff checklist"
+                    ),
+                ),
+                ProposalWriterSection(
+                    title="Deliverables",
+                    content=(
+                        "Runnable FastAPI + RAG service, eval fixtures with logged scores in Postgres, "
+                        "README with deploy + rollback steps, and backlog for scale-up milestones."
+                    ),
+                ),
+                ProposalWriterSection(
+                    title="Risk Management",
+                    content=(
+                        "Scope drift frozen with OpenAPI contract Week 1. Model regression blocked with golden eval set. "
+                        "Secrets stay in env/Vault — no keys in git."
+                    ),
+                ),
+                ProposalWriterSection(
+                    title="Next Steps",
+                    content="Reply with your preferred stack for embeddings and I will propose a 48h slice with acceptance checks.",
+                ),
             ],
         ),
     )
     llm.register(
-        "freelance_proposal_agent",
-        FreelanceProposalOutput(
-            hook="I've shipped similar AI pipelines that cut manual ops ~60% in two weeks.",
-            understanding_need="• You need FastAPI + LLM glue with low rework risk\n• You want proof before scaling spend",
-            approach="Discovery → thin vertical slice → daily async updates; eval harness from day one.",
-            relevant_experience="Similar wins used short demos + logged evals to de-risk delivery (pattern win-1).",
-            call_to_action="Reply with your preferred stack for embeddings and I’ll propose a 48h slice with acceptance checks.",
-        ),
-    )
-    llm.register(
-        "freelance_verifier_agent",
+        "verifier_job",
         VerifierAgentOutput(
             score=84,
             issues=[],
@@ -233,31 +296,13 @@ def stub_llm_freelance_happy_path() -> StubLLM:
             freelance_fail_flags=[],
         ),
     )
-    llm.register(
-        "critique_agent",
-        ProposalCritiqueOutput(
-            improvements=["Keep hook to two lines", "Name one metric from memory"],
-            reply_probability_delta="+10%",
-            enterprise_gap_summary="",
-            top1_style_rewrite="",
-        ),
-    )
-    llm.register(
-        "cross_proposal_diff_agent",
-        CrossProposalDiffOutput(
-            stronger_hooks=["Name the buyer’s stack explicitly in the hook"],
-            missing_signals=["One line on communication cadence"],
-            better_cta=["Ask one scoping question instead of a generic ‘happy to chat’"],
-            structure_optimization=["Merge proof into two scannable lines"],
-        ),
-    )
     return llm
 
 
 def stub_llm_compliance_fail() -> StubLLM:
     llm = stub_llm_happy_path()
     llm.register(
-        "verifier_agent",
+        "verifier",
         VerifierAgentOutput(
             score=52,
             issues=["Executive summary lacks measurable proof points"],

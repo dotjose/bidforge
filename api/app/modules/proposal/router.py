@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,12 +14,25 @@ from app.contracts.errors import ErrorResponse, error_response
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import settings
 from app.modules.proposal.pdf_export import build_proposal_pdf_bytes
-from app.integrations.proposal_store import get_proposal_run, list_proposal_runs
+from app.integrations.proposal_store import (
+    fetch_freelance_win_memory_rows,
+    get_proposal_run,
+    list_proposal_runs,
+    merge_proposal_run_output_metadata,
+    update_proposal_run_pattern,
+)
+from app.contracts.proposal_public import (
+    ProposalPublicRunResponse,
+    ProposalSavedRunPublic,
+    build_public_from_stored_proposal_output,
+    build_public_run_response,
+)
+from app.integrations.workspace_settings_store import upsert_workspace_settings_full
 from bidforge_schemas import RagConfig, WorkspaceMemory, WorkspaceProposal, WorkspaceSettings, WorkspaceState
 
+from app.integrations.supabase import probe_supabase_proposal_persistence_bundle
 from app.pipeline.errors import FailedPipeline
 from app.pipeline.orchestrator import execute_proposal_pipeline_async
-from app.pipeline.run_envelope import build_insights, minimal_degraded_proposal
 from app.pipeline.title_inference import infer_proposal_title
 from app.workspace.agents import (
     effective_pipeline_request_mode,
@@ -27,6 +42,24 @@ from app.workspace.agents import (
     workspace_generation_rfp,
     workspace_rfp_plain,
 )
+
+log = logging.getLogger(__name__)
+
+
+def _pipeline_failed_user_hint(failed_step: str | None, message: str) -> str:
+    """Short actionable suffix for 502 PIPELINE_FAILED (full detail remains in server logs)."""
+    fs = (failed_step or "").lower()
+    msg = (message or "").lower()
+    if "openrouter" in msg or "404" in msg or "llmtransport" in msg or "connection" in msg:
+        return " Hint: check OPENROUTER_API_KEY and OPENROUTER_MODEL_PRIMARY on openrouter.ai/models."
+    if "proposal_events" in fs or "proposal_node_cache" in fs:
+        return " Hint: run Supabase migrations for DAG tables, or set STRICT_PROPOSAL_PERSISTENCE=0 in development."
+    if "supabase_persist" in fs or "proposal_not_saved" in msg:
+        return " Hint: verify SUPABASE_URL / key and public.proposals visibility."
+    if fs:
+        return f" Hint: failed_step={failed_step!s} — see API logs for this trace_id."
+    return ""
+
 
 router = APIRouter(tags=["proposal"])
 
@@ -38,6 +71,12 @@ class ProposalWorkspaceInput(BaseModel):
 
     tone: str = ""
     writing_style: str = ""
+    openrouter_model_primary: str = Field(
+        default="",
+        alias="openrouterModelPrimary",
+        max_length=200,
+        description="Optional OpenRouter model id for this run (overrides saved workspace default).",
+    )
     proposal_mode: Literal["auto", "enterprise", "freelance"] = Field(
         default="auto",
         alias="proposalMode",
@@ -55,6 +94,8 @@ def _merge_workspace_overlay(ws: WorkspaceState, overlay: ProposalWorkspaceInput
         s["tone"] = overlay.tone.strip()[:4000]
     if overlay.writing_style.strip():
         s["writing_style"] = overlay.writing_style.strip()[:8000]
+    if overlay.openrouter_model_primary.strip():
+        s["openrouter_model_primary"] = overlay.openrouter_model_primary.strip()[:200]
     if overlay.proposal_mode != "auto":
         s["proposal_mode"] = overlay.proposal_mode
     if overlay.company_profile:
@@ -91,7 +132,7 @@ class ProposalRunRequest(BaseModel):
     pipeline_mode: Literal["auto", "enterprise", "freelance"] = Field(
         default="auto",
         alias="pipelineMode",
-        description="auto: classify input; enterprise: RFP brain; freelance: Win Engine (hook-first).",
+        description="auto: classify input; enterprise: RFP brain; freelance: job-post proposal path.",
     )
     rfp: str = Field(
         ...,
@@ -109,6 +150,23 @@ class ProposalRunRequest(BaseModel):
         alias="draftIntensity",
         description="Shapes tone and assertiveness for this run (threaded into workspace prefs / brief).",
     )
+    continuation_run_id: str | None = Field(
+        default=None,
+        alias="continuationRunId",
+        max_length=120,
+        description="Optional prior saved run id — chains pipeline_state.previous_run_ids for incremental drafts.",
+    )
+    learning_snippet: str | None = Field(
+        default=None,
+        alias="learningSnippet",
+        max_length=4000,
+        description="User-saved pattern or operator cues appended to the generation brief (UTF-8).",
+    )
+    proposal_depth: Literal["short", "full"] = Field(
+        default="full",
+        alias="proposalDepth",
+        description="Job-post path: concise vs full depth (same structure).",
+    )
 
     @model_validator(mode="after")
     def _enforce_rfp_size(self) -> ProposalRunRequest:
@@ -117,129 +175,9 @@ class ProposalRunRequest(BaseModel):
         return self
 
 
-class ProposalRunResponse(BaseModel):
-    """Successful pipeline completion (HTTP 200)."""
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "proposal": {
-                        "sections": {
-                            "executive_summary": "…",
-                            "technical_approach": "…",
-                            "delivery_plan": "…",
-                            "risk_management": "…",
-                        },
-                        "format_notes": [],
-                        "strategy": {"strategy": "…", "based_on": []},
-                        "memory_summary": {
-                            "similar_proposals": [],
-                            "win_patterns": [],
-                            "methodology_blocks": [],
-                        },
-                        "memory_grounded": True,
-                        "grounding_warning": None,
-                        "section_attributions": [],
-                    },
-                    "score": 82,
-                    "issues": ["missing_requirement:…"],
-                    "trace_id": "550e8400e29b41d4716646655440000",
-                    "memory_grounded": True,
-                    "grounding_warning": None,
-                    "timeline": [{"phase": "Discovery", "duration": "2 weeks"}],
-                    "memory_used": {
-                        "similar_proposals": [],
-                        "win_patterns": [],
-                        "methodology_blocks": [],
-                    },
-                    "status": "success",
-                    "pipeline_metadata": {
-                        "pipeline_timeout_s": 120.0,
-                        "per_agent_timeout_s": 30.0,
-                        "rfp_max_chars": 120000,
-                    },
-                }
-            ]
-        }
-    )
-
-    proposal: dict[str, Any]
-    score: int
-    issues: list[str]
-    suggestions: list[str] = Field(
-        default_factory=list,
-        description="Verifier-authored remediation hints; not part of the proposal body.",
-    )
-    trace_id: str
-    memory_grounded: bool = Field(
-        default=True,
-        description="False when no indexed proposal memory was available for this run.",
-    )
-    memory_status: Literal["empty", "grounded"] = Field(
-        default="grounded",
-        description="Whether tenant-scoped retrieval returned usable patterns for this brain.",
-    )
-    grounding_warning: str | None = Field(
-        default=None,
-        description="Shown when the draft was not historically grounded.",
-    )
-    status: Literal["success", "degraded"] = Field(
-        default="success",
-        description="`success` for a full run; `degraded` when the service returned a usable minimal draft.",
-    )
-    run_id: str = Field(default="", description="Stable id for this proposal run (support).")
-    insights: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Warnings, missing-context flags, and fallback indicators (customer-safe).",
-    )
-    pipeline_metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Non-sensitive echo of server limits (timeouts, max RFP size).",
-    )
-    timeline: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Deterministic timeline phases extracted from the RFP and requirement matrix.",
-    )
-    memory_used: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Echo of retrieval: similar proposals, win patterns, methodology blocks.",
-    )
-    pipeline_mode: Literal["enterprise", "freelance"] = Field(
-        default="enterprise",
-        description="Which cognitive path produced this response.",
-    )
-    input_classification: dict[str, Any] | None = Field(
-        default=None,
-        description="Classifier output when pipeline_mode was auto or echo of manual override.",
-    )
-    job_understanding: dict[str, Any] | None = None
-    hook: dict[str, Any] | None = Field(default=None, description="Freelance hook agent output when applicable.")
-    critique: dict[str, Any] | None = Field(default=None, description="Mode-aware improvement suggestions.")
-    verifier_metrics: dict[str, Any] | None = Field(
-        default=None,
-        description="Sub-scores: enterprise compliance/completeness or freelance reply/hook/trust/conciseness.",
-    )
-    reply_likelihood_0_100: int | None = Field(
-        default=None,
-        description="0–100 reply likelihood (freelance); null for enterprise.",
-    )
-    title: str = Field(
-        default="",
-        description="Job-specific title derived from RFP / job post / intent (never a product placeholder).",
-    )
-    cross_proposal_diff: dict[str, Any] | None = Field(
-        default=None,
-        description="CrossProposalDiffAgent output: hooks, signals, CTA, structure vs last wins.",
-    )
-    persisted_run_id: str | None = Field(
-        default=None,
-        description="UUID of the row in `proposal_runs` when persistence succeeded.",
-    )
-    workspace_state: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Canonical WorkspaceState echo after run (RFP slice, settings, memory echo, trace).",
-    )
+class MemoryPatternItemOut(BaseModel):
+    label: str
+    outcome: str
 
 
 class ProposalRunSummaryOut(BaseModel):
@@ -251,16 +189,69 @@ class ProposalRunSummaryOut(BaseModel):
     created_at: str
 
 
-class ProposalRunDetailOut(BaseModel):
-    id: str
-    title: str
-    score: int
-    trace_id: str
-    pipeline_mode: str
-    created_at: str
-    rfp_input: str
-    proposal_output: dict[str, Any]
-    issues: list[Any]
+def build_proposal_run_summaries(clerk_user_id: str, *, limit: int = 50) -> list[ProposalRunSummaryOut]:
+    rows = list_proposal_runs(clerk_user_id, limit=limit)
+    out: list[ProposalRunSummaryOut] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        cid = r.get("created_at")
+        out.append(
+            ProposalRunSummaryOut(
+                id=str(r.get("id") or ""),
+                title=str(r.get("title") or ""),
+                score=int(r.get("score") or 0),
+                trace_id=str(r.get("trace_id") or ""),
+                pipeline_mode=str(r.get("pipeline_mode") or "enterprise"),
+                created_at=str(cid) if cid is not None else "",
+            )
+        )
+    return out
+
+
+def _persist_after_successful_proposal_run(
+    clerk_user_id: str,
+    ws: WorkspaceState,
+    rfp_id: str | None,
+    result: dict[str, Any],
+) -> None:
+    """Upsert workspace settings used for this run; attach settings snapshot + rfp_id to saved proposal row."""
+    rag_c = {**ws.settings.rag.model_dump(), "proposal_mode": ws.settings.proposal_mode}
+    upsert_workspace_settings_full(
+        clerk_user_id,
+        {
+            "company_profile": ws.settings.company_profile,
+            "tone": ws.settings.tone,
+            "writing_style": ws.settings.writing_style,
+            "openrouter_model_primary": ws.settings.openrouter_model_primary,
+            "rag_config": rag_c,
+        },
+    )
+    snap = {
+        "user_id": clerk_user_id,
+        "tone": ws.settings.tone,
+        "writing_style": ws.settings.writing_style,
+        "mode": str(ws.settings.proposal_mode),
+        "rag_enabled": bool(ws.settings.rag.enabled),
+        "rag_config": ws.settings.rag.model_dump(),
+        "company_profile": ws.settings.company_profile,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    pid = result.get("persisted_run_id")
+    if pid and str(pid).strip():
+        merge_proposal_run_output_metadata(
+            clerk_user_id,
+            str(pid).strip(),
+            settings_snapshot=snap,
+            rfp_id=rfp_id,
+        )
+
+
+class ProposalPatternRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    proposal_id: str = Field(..., max_length=120, alias="proposalId")
+    pattern: Literal["strong", "weak", "saved"]
 
 
 class ProposalPdfExportRequest(BaseModel):
@@ -292,32 +283,61 @@ class ProposalPdfExportRequest(BaseModel):
 
 @router.post(
     "/run",
-    response_model=ProposalRunResponse,
+    response_model=ProposalPublicRunResponse,
     summary="Run proposal pipeline",
     description=(
-        "Executes the memory-first pipeline (extraction → structuring → RAG → strategy → proposal → timeline → format → verify). "
+        "Executes the 5-node DAG (router → job_intel → solution → proposal → verifier; then persist). "
         "Requires `Authorization: Bearer` with a valid Clerk session JWT unless `SKIP_AUTH` is enabled for local dev. "
         f"Server-side deadline: **{settings.pipeline_timeout_s}s** (504 on timeout). "
         f"Max RFP size: **{settings.rfp_max_chars}** characters."
     ),
-    response_description="Structured proposal, verifier score, flattened issues, and trace id.",
+    response_description="Sanitized client contract: title, sections, score, issues, memory_used flag, diff summary.",
     responses={
         422: {"model": ErrorResponse, "description": "Validation or RFP size violation"},
         503: {"model": ErrorResponse, "description": "LLM provider not configured"},
         504: {"model": ErrorResponse, "description": "Pipeline exceeded server timeout"},
         401: {"model": ErrorResponse, "description": "Missing or invalid bearer token"},
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
+        502: {"model": ErrorResponse, "description": "Pipeline agent failed (strict orchestrator)"},
+        503: {
+            "model": ErrorResponse,
+            "description": "Supabase not configured, schema missing, or proposal row not persisted",
+        },
     },
 )
 async def run_proposal(
     body: ProposalRunRequest,
     user: Annotated[CurrentUser, Depends(get_current_user)],
-) -> ProposalRunResponse:
-    meta = {
-        "pipeline_timeout_s": settings.pipeline_timeout_s,
-        "per_agent_timeout_s": settings.per_agent_timeout_s,
-        "rfp_max_chars": settings.rfp_max_chars,
-    }
+) -> ProposalPublicRunResponse:
+    if settings.persistence_strict_enforced():
+        gate = probe_supabase_proposal_persistence_bundle()
+        if gate == "no_env":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=error_response(
+                    code="ENV_NOT_LOADED",
+                    message="Supabase credentials are not configured; proposal runs cannot be persisted.",
+                ),
+            )
+        if gate == "missing_table":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=error_response(
+                    code="SUPABASE_SCHEMA_MISSING",
+                    message=(
+                        "public.proposals and public.proposal_events must both be visible to the API. "
+                        "Apply infra/supabase migrations (including proposal DAG tables) and reload the PostgREST schema."
+                    ),
+                ),
+            )
+        if gate == "error":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=error_response(
+                    code="SUPABASE_UNAVAILABLE",
+                    message="Could not reach Supabase to verify persistence. Retry shortly.",
+                ),
+            )
     try:
         norm = run_document_normalizer_agent(
             raw_bytes=None,
@@ -329,6 +349,26 @@ async def run_proposal(
         ws = run_settings_injector_agent(ws, user.user_id)
         r_core = workspace_rfp_plain(ws)
         r_gen = workspace_generation_rfp(ws)
+        learn = (body.learning_snippet or "").strip()
+        if learn:
+            r_gen = (
+                f"{r_gen}\n[USER_PATTERN — honor voice and structure; never copy verbatim; "
+                "never invent credentials]\n"
+                f"{learn[:4000]}\n"
+            )
+        cont = (body.continuation_run_id or "").strip()
+        prior_ids: list[str] = []
+        if cont:
+            prior_ids = [cont]
+            prev_row = get_proposal_run(user.user_id, cont)
+            po = prev_row.get("proposal_output") if isinstance(prev_row, dict) else None
+            if isinstance(po, dict):
+                ps = po.get("pipeline_state")
+                if isinstance(ps, dict):
+                    ch = ps.get("previous_run_ids")
+                    if isinstance(ch, list):
+                        tail = [str(x) for x in ch if str(x).strip()][-7:]
+                        prior_ids = [*tail, cont] if cont not in tail else tail
         pm = effective_pipeline_request_mode(ws, body.pipeline_mode)
         result = await execute_proposal_pipeline_async(
             r_core,
@@ -338,6 +378,9 @@ async def run_proposal(
             workspace_snapshot=ws.model_dump(),
             rfp_for_generation=r_gen,
             draft_intensity=body.draft_intensity,
+            prior_run_ids=prior_ids or None,
+            learning_snippet_applied=bool(learn),
+            proposal_depth=body.proposal_depth,
         )
         rid = str(result.get("run_id") or result.get("trace_id") or "")
         ws_out = ws.model_copy(
@@ -351,6 +394,15 @@ async def run_proposal(
             }
         )
         result = {**result, "workspace_state": ws_out.model_dump()}
+        try:
+            _persist_after_successful_proposal_run(
+                user.user_id,
+                ws,
+                body.rfp_id,
+                result,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("post-run persistence hook failed: %s", e)
     except RuntimeError as e:
         msg = str(e)
         if "OPENROUTER" in msg.upper():
@@ -363,93 +415,63 @@ async def run_proposal(
             detail=error_response(code="INTERNAL_ERROR", message=msg),
         ) from e
     except asyncio.TimeoutError as e:
+        budget_s = float(settings.pipeline_timeout_s)
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=error_response(
                 code="TIMEOUT",
-                message="Proposal pipeline timed out.",
+                message=(
+                    f"The proposal run exceeded the server time limit ({budget_s:g}s; raise PIPELINE_TIMEOUT_S). "
+                    "Common causes: OpenRouter slow or unreachable (check OPENROUTER_API_KEY and network), or many "
+                    "LLM retries. For Langfuse noise in local logs, clear LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY."
+                ),
             ),
         ) from e
     except FailedPipeline as e:
-        rid = str(e.trace_id or uuid.uuid4().hex)
-        fail_title = infer_proposal_title(
-            body.rfp,
-            pipeline_mode="enterprise",
-            job_understanding=None,
-            input_classification=None,
-            requirements=None,
-        )
-        return ProposalRunResponse(
-            proposal=minimal_degraded_proposal(
-                headline="We couldn't finish this draft automatically.",
-                body="Try again with a shorter brief, or check your connection. Nothing was saved as a final proposal.",
+        log.warning("pipeline failed trace_id=%s step=%s", str(e.trace_id)[:32], e.failed_step)
+        hint = _pipeline_failed_user_hint(e.failed_step, str(e))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=error_response(
+                code="PIPELINE_FAILED",
+                message=str(e) + hint,
+                failed_step=e.failed_step,
+                trace_id=str(e.trace_id) if e.trace_id else None,
             ),
-            score=0,
-            issues=[],
-            suggestions=[],
-            trace_id=rid,
-            run_id=rid,
-            memory_grounded=False,
-            memory_status="empty",
-            grounding_warning=None,
-            status="degraded",
-            pipeline_metadata=meta,
-            timeline=[],
-            memory_used={},
-            pipeline_mode="enterprise",
-            input_classification=None,
-            job_understanding=None,
-            hook=None,
-            critique=None,
-            verifier_metrics=None,
-            reply_likelihood_0_100=None,
-            title=fail_title,
-            cross_proposal_diff=None,
-            persisted_run_id=None,
-            workspace_state={},
-            insights=build_insights(
-                warnings=[
-                    "We could not complete the full draft. Try again with a shorter brief, "
-                    "or contact support if this keeps happening."
-                ],
-                missing_context=True,
-                rag_fallback_mode=True,
-                degraded=True,
-            ),
-        )
+        ) from e
     rid = str(result.get("run_id") or result.get("trace_id") or "")
-    exec_st = str(result.get("execution_status") or "success")
-    api_status: Literal["success", "degraded"] = "degraded" if exec_st == "degraded" else "success"
-    return ProposalRunResponse(
-        proposal=result["proposal"],
-        score=int(result["score"]),
-        issues=list(result["issues"]),
-        suggestions=list(result.get("suggestions") or []),
-        trace_id=rid,
-        run_id=rid,
-        memory_grounded=bool(result.get("memory_grounded", True)),
-        memory_status="empty"
-        if str(result.get("memory_status") or "").lower() == "empty"
-        else "grounded",
-        grounding_warning=result.get("grounding_warning"),
-        status=api_status,
-        pipeline_metadata=meta,
-        timeline=list(result.get("timeline") or []),
-        memory_used=dict(result.get("memory_used") or {}),
-        pipeline_mode="freelance"
-        if result.get("pipeline_mode") == "freelance"
-        else "enterprise",
-        input_classification=dict(result["input_classification"]) if result.get("input_classification") else None,
-        job_understanding=dict(result["job_understanding"]) if result.get("job_understanding") else None,
-        hook=dict(result["hook"]) if result.get("hook") else None,
-        critique=dict(result["critique"]) if result.get("critique") else None,
-        verifier_metrics=dict(result["verifier_metrics"]) if result.get("verifier_metrics") else None,
-        reply_likelihood_0_100=result.get("reply_likelihood_0_100"),
-        insights=dict(result.get("insights") or {}),
+    if settings.persistence_strict_enforced() and not result.get("persisted_run_id"):
+        log.error("persisted_run_id missing after pipeline trace_id=%s", rid[:32])
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=error_response(
+                code="PROPOSAL_NOT_SAVED",
+                message="Pipeline completed but the proposal row was not persisted.",
+                trace_id=rid or None,
+            ),
+        )
+    if not result.get("persisted_run_id"):
+        log.warning(
+            "persisted_run_id missing after pipeline trace_id=%s",
+            rid[:32],
+        )
+    cross_delta = int(result.get("cross_diff_delta_score") or 0)
+    pm = "freelance" if result.get("pipeline_mode") == "freelance" else "enterprise"
+    prop = result.get("proposal") if isinstance(result.get("proposal"), dict) else None
+    diff_raw = result.get("cross_proposal_diff") if isinstance(result.get("cross_proposal_diff"), dict) else None
+    return build_public_run_response(
+        proposal=prop,
+        score=int(result.get("score") or 0),
+        issues=list(result.get("issues") or []),
         title=str(result.get("title") or ""),
-        cross_proposal_diff=dict(result["cross_proposal_diff"]) if result.get("cross_proposal_diff") else None,
+        pipeline_mode=pm,
+        memory_grounded=bool(result.get("memory_grounded", True)),
+        memory_status=str(result.get("memory_status") or ""),
+        memory_used=dict(result.get("memory_used") or {}) if isinstance(result.get("memory_used"), dict) else None,
+        cross_proposal_diff=diff_raw,
         persisted_run_id=str(result["persisted_run_id"]) if result.get("persisted_run_id") else None,
-        workspace_state=dict(result.get("workspace_state") or {}),
+        run_id=rid,
+        cross_diff_delta_score=cross_delta,
     )
 
 
@@ -459,35 +481,43 @@ async def run_proposal(
     summary="List saved proposal runs",
 )
 async def list_saved_runs(user: Annotated[CurrentUser, Depends(get_current_user)]) -> list[ProposalRunSummaryOut]:
-    rows = list_proposal_runs(user.user_id, limit=50)
-    out: list[ProposalRunSummaryOut] = []
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-        cid = r.get("created_at")
-        out.append(
-            ProposalRunSummaryOut(
-                id=str(r.get("id") or ""),
-                title=str(r.get("title") or ""),
-                score=int(r.get("score") or 0),
-                trace_id=str(r.get("trace_id") or ""),
-                pipeline_mode=str(r.get("pipeline_mode") or "enterprise"),
-                created_at=str(cid) if cid is not None else "",
-            )
+    return build_proposal_run_summaries(user.user_id, limit=50)
+
+
+@router.post(
+    "/pattern",
+    summary="Persist operator pattern on a saved proposal run",
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+async def persist_proposal_pattern(
+    body: ProposalPatternRequest,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> dict[str, str]:
+    rid = body.proposal_id.strip()
+    if not rid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=error_response(code="VALIDATION_ERROR", message="proposal_id is required."),
         )
-    return out
+    ok = update_proposal_run_pattern(user.user_id, rid, pattern=body.pattern)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_response(code="NOT_FOUND", message="Proposal run not found."),
+        )
+    return {"status": "ok", "proposal_id": rid, "pattern": body.pattern}
 
 
 @router.get(
     "/runs/{run_id}",
-    response_model=ProposalRunDetailOut,
-    summary="Get one saved proposal run",
+    response_model=ProposalSavedRunPublic,
+    summary="Get one saved proposal run (sanitized)",
     responses={404: {"model": ErrorResponse}},
 )
 async def get_saved_run(
     run_id: str,
     user: Annotated[CurrentUser, Depends(get_current_user)],
-) -> ProposalRunDetailOut:
+) -> ProposalSavedRunPublic:
     row = get_proposal_run(user.user_id, run_id)
     if row is None:
         raise HTTPException(
@@ -503,18 +533,36 @@ async def get_saved_run(
         issues_list = issues_raw
     else:
         issues_list = []
-    cid = row.get("created_at")
-    return ProposalRunDetailOut(
-        id=str(row.get("id") or ""),
-        title=str(row.get("title") or ""),
-        score=int(row.get("score") or 0),
-        trace_id=str(row.get("trace_id") or ""),
-        pipeline_mode=str(row.get("pipeline_mode") or "enterprise"),
-        created_at=str(cid) if cid is not None else "",
+    return build_public_from_stored_proposal_output(
+        po,
+        row_title=str(row.get("title") or ""),
+        row_score=int(row.get("score") or 0),
+        row_issues=issues_list,
+        row_id=str(row.get("id") or ""),
         rfp_input=str(row.get("rfp_input") or ""),
-        proposal_output=po,
-        issues=issues_list,
+        row_pipeline_mode=str(row.get("pipeline_mode") or ""),
     )
+
+
+@router.get(
+    "/memory/patterns",
+    response_model=list[MemoryPatternItemOut],
+    summary="Human-readable win hooks for Memory tab (no embeddings)",
+)
+async def list_memory_patterns(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> list[MemoryPatternItemOut]:
+    rows = fetch_freelance_win_memory_rows(user.user_id, limit=16)
+    out: list[MemoryPatternItemOut] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        hook = str(r.get("opening_hook") or "").strip()
+        if not hook:
+            continue
+        jt = str(r.get("job_type") or "pattern")
+        out.append(MemoryPatternItemOut(label=hook[:200] + ("…" if len(hook) > 200 else ""), outcome=jt))
+    return out
 
 
 @router.post(
@@ -535,7 +583,7 @@ async def export_proposal_pdf(
         pipeline_mode=body.pipeline_mode,
         score=body.score,
         issues=body.issues,
-        memory_insight_bullets=None,
+        memory_insight_bullets=body.memory_insight_bullets,
         memory_appendix=None,
     )
     return Response(

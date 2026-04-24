@@ -14,13 +14,21 @@ def test_freelance_pipeline_forced_mode() -> None:
         pipeline_mode="freelance",
     )
     assert result["pipeline_mode"] == "freelance"
-    assert result["proposal"]["pipeline_mode"] == "freelance"
-    assert result["proposal"]["freelance"]["hook"]
-    assert result["proposal"]["freelance"]["understanding_need"]
+    prop = result["proposal"]
+    assert isinstance(prop, dict)
+    assert prop["pipeline_mode"] == "freelance"
+    assert str(prop.get("title") or "").strip()
+    secs = prop.get("sections")
+    assert isinstance(secs, list) and len(secs) >= 7
+    titles = [str(s.get("title") or "") for s in secs if isinstance(s, dict)]
+    assert "Overview" in titles
+    assert "Execution Plan" in titles
+    risk = next((s for s in secs if isinstance(s, dict) and s.get("title") == "Risk Management"), None)
+    assert risk and str(risk.get("content") or "").strip()
     assert result.get("title")
     assert "bidforge" not in str(result.get("title") or "").lower()
-    assert result["hook"] and result["hook"]["hook"]
     assert result["job_understanding"]["buyer_intent"]
-    assert result["critique"]["improvements"]
+    assert result.get("proposal_depth") == "full"
     assert result["reply_likelihood_0_100"] is not None
-    assert result["timeline"] == []
+    tl = result.get("timeline")
+    assert isinstance(tl, list) and len(tl) >= 1
