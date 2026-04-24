@@ -402,15 +402,16 @@ def infer_proposal_title(
             if not _looks_like_compliance_clause(snippet):
                 candidates.append(snippet)
 
-    pe = _title_from_proposal_excerpt(proposal_payload)
-    if pe and pe.lower() not in _FORBIDDEN and not _looks_like_capability_filler(pe):
-        candidates.append(pe)
-
     if lines:
         candidates.append(_shorten_opportunity_title(lines[0], max_len=100))
     head = (rfp or "").strip().split("\n", 1)[0].strip()
     if len(head) >= 8:
         candidates.append(_clean_line(head))
+
+    # After RFP / structured signals — writer `title` can echo a prior template; do not let it beat the new brief.
+    pe = _title_from_proposal_excerpt(proposal_payload)
+    if pe and pe.lower() not in _FORBIDDEN and not _looks_like_capability_filler(pe):
+        candidates.append(pe)
 
     picked = _pick_first_valid_title(candidates)
     if not picked:

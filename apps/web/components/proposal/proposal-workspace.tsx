@@ -65,6 +65,8 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   }, [searchParams, initialRunId]);
   const fileRef = useRef<HTMLInputElement>(null);
   const pendingLearningRef = useRef<string | null>(null);
+  /** RFP text that last completed run / hydration used — when `briefDraft` diverges, titles must not stay on the old job. */
+  const lastCommittedBriefRef = useRef<string | null>(null);
   const latestRunHydratedRef = useRef(false);
   const [briefDraft, setBriefDraft] = useState("");
   /** Mirrors textarea — avoids auto `?run=` hydration overwriting in-progress typing before debounce lands in the store. */
@@ -81,7 +83,6 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
   const [rightTab, setRightTab] = useState<"proposal" | "memory" | "review">("proposal");
   const [memoryPatterns, setMemoryPatterns] = useState<MemoryPatternItem[] | null>(null);
 
-  const jobDescription = useProposalStore((s) => s.jobDescription);
   const generated = useProposalStore((s) => s.generated);
   const score = useProposalStore((s) => s.score);
   const issues = useProposalStore((s) => s.issues);
@@ -132,12 +133,25 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     setJobDescription(value);
   }, 450);
 
+  const debouncedRetitleOnBriefDrift = useDebouncedCallback(() => {
+    const cur = briefDraft.trim();
+    const last = lastCommittedBriefRef.current;
+    if (last === null || cur === last) return;
+    setProposalTitle(null);
+    setTitleDraft(fallbackProposalExportTitle(briefDraft, generated, null));
+  }, 400);
+
   useEffect(() => {
     briefDraftRef.current = briefDraft;
   }, [briefDraft]);
 
   useEffect(() => {
-    setTitleDraft((proposalTitle ?? "").trim());
+    debouncedRetitleOnBriefDrift();
+  }, [briefDraft, generated, debouncedRetitleOnBriefDrift]);
+
+  useEffect(() => {
+    const t = (proposalTitle ?? "").trim();
+    if (t) setTitleDraft(t);
   }, [proposalTitle]);
 
   useEffect(() => {
@@ -209,10 +223,14 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
         if (rfp.trim()) {
           setJobDescription(rfp);
           setBriefDraft(rfp);
+          lastCommittedBriefRef.current = rfp.trim();
+        } else {
+          lastCommittedBriefRef.current = briefDraftRef.current.trim() || null;
         }
         setBrainMode(pipeline_mode === "freelance" ? "freelance" : "enterprise");
         setTitleDraft((full.title || "").trim());
         setProposalTitle((full.title || "").trim() ? full.title.trim() : null);
+        const breakdown = issuesToScoreBreakdown(run.issues ?? []);
         setResult({
           run,
           generatedMarkdown: md,
@@ -275,6 +293,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
         router.replace(`${url.pathname}${url.search}${url.hash}`, { scroll: false });
       }
     }
+    lastCommittedBriefRef.current = briefDraftRef.current.trim() || null;
     pendingLearningRef.current = null;
   }, [state, setResult, setProposalTitle, router]);
 
@@ -409,12 +428,17 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     }
   }, [apiClient, brainMode, patternBody, patternTags, patternTitle]);
 
+  const briefDrifted =
+    lastCommittedBriefRef.current !== null && briefDraft.trim() !== lastCommittedBriefRef.current;
+
   const onPrintPdf = useCallback(() => {
+    const apiTitleForFallback = briefDrifted ? null : proposalTitle;
     const docTitle =
-      (titleDraft || proposalTitle || "").trim() ||
-      fallbackProposalExportTitle(briefDraft, generated, proposalTitle);
+      (titleDraft || "").trim() ||
+      (proposalTitle || "").trim() ||
+      fallbackProposalExportTitle(briefDraft, generated, apiTitleForFallback);
     printProposalAsPdf(generated, undefined, docTitle);
-  }, [briefDraft, generated, proposalTitle, titleDraft]);
+  }, [briefDrifted, briefDraft, generated, proposalTitle, titleDraft]);
 
   const onDownloadServerPdf = useCallback(async () => {
     if (!proposalSections) {
@@ -424,9 +448,11 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     setActionBusy(true);
     setActionMsg(null);
     try {
+      const apiTitleForFallback = briefDrifted ? null : proposalTitle;
       const exportTitle =
-        (titleDraft || proposalTitle || "").trim() ||
-        fallbackProposalExportTitle(briefDraft, generated, proposalTitle);
+        (titleDraft || "").trim() ||
+        (proposalTitle || "").trim() ||
+        fallbackProposalExportTitle(briefDraft, generated, apiTitleForFallback);
       const s = proposalSections;
       const blob = await apiClient.exportProposalPdf({
         title: exportTitle,
@@ -473,7 +499,18 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     } finally {
       setActionBusy(false);
     }
-  }, [apiClient, issues, proposalSections, score, brainMode, briefDraft, generated, proposalTitle, titleDraft]);
+  }, [
+    apiClient,
+    issues,
+    proposalSections,
+    score,
+    brainMode,
+    briefDrifted,
+    briefDraft,
+    generated,
+    proposalTitle,
+    titleDraft,
+  ]);
 
   const loading = state.status === "loading";
   const errorMsg =
@@ -843,10 +880,16 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
               setDraftIntensity("balanced");
               setJobDescription(briefDraft);
               await postPatternIfPersisted("saved");
-              void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "balanced", {
-                continuationRunId: persistedRunId ?? undefined,
-                learningSnippet: pendingLearningRef.current?.trim() || undefined,
-              });
+              void runNow(
+                briefForSubmit,
+                pipelineFromBrainMode(brainMode),
+                "balanced",
+                {
+                  continuationRunId: persistedRunId ?? undefined,
+                  learningSnippet: pendingLearningRef.current?.trim() || undefined,
+                },
+                { skipCooldown: true },
+              );
             })();
           }}
         >
@@ -863,10 +906,16 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
               setDraftIntensity("strong");
               setJobDescription(briefDraft);
               await postPatternIfPersisted("strong");
-              void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "strong", {
-                continuationRunId: persistedRunId ?? undefined,
-                learningSnippet: pendingLearningRef.current?.trim() || undefined,
-              });
+              void runNow(
+                briefForSubmit,
+                pipelineFromBrainMode(brainMode),
+                "strong",
+                {
+                  continuationRunId: persistedRunId ?? undefined,
+                  learningSnippet: pendingLearningRef.current?.trim() || undefined,
+                },
+                { skipCooldown: true },
+              );
             })();
           }}
         >
@@ -883,10 +932,16 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
               setDraftIntensity("weak");
               setJobDescription(briefDraft);
               await postPatternIfPersisted("weak");
-              void runNow(briefForSubmit, pipelineFromBrainMode(brainMode), "weak", {
-                continuationRunId: persistedRunId ?? undefined,
-                learningSnippet: pendingLearningRef.current?.trim() || undefined,
-              });
+              void runNow(
+                briefForSubmit,
+                pipelineFromBrainMode(brainMode),
+                "weak",
+                {
+                  continuationRunId: persistedRunId ?? undefined,
+                  learningSnippet: pendingLearningRef.current?.trim() || undefined,
+                },
+                { skipCooldown: true },
+              );
             })();
           }}
         >

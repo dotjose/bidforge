@@ -76,6 +76,7 @@ export function useProposalRun() {
       pipelineMode: "auto" | "enterprise" | "freelance" = "auto",
       draftIntensity: "balanced" | "strong" | "weak" = "balanced",
       extra?: ProposalRunExtra,
+      opts?: { skipCooldown?: boolean },
     ) => {
       if (!isLoaded) {
         setState({
@@ -112,8 +113,12 @@ export function useProposalRun() {
       }
 
       const now = Date.now();
-      if (busyRef.current) return;
-      if (now - lastRunAt.current < MIN_SUBMIT_INTERVAL_MS) return;
+      if (busyRef.current) {
+        return;
+      }
+      if (!opts?.skipCooldown && now - lastRunAt.current < MIN_SUBMIT_INTERVAL_MS) {
+        return;
+      }
 
       busyRef.current = true;
       lastRunAt.current = now;
