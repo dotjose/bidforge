@@ -40,6 +40,8 @@ import { toast } from "sonner";
 
 export type ProposalWorkspaceProps = {
   initialRunId?: string | null;
+  /** When "new", the workspace must not auto-hydrate any prior runs. */
+  mode?: "default" | "new";
 };
 
 const emptyBreakdown = {
@@ -55,14 +57,15 @@ function pipelineFromBrainMode(m: BrainMode): "auto" | "enterprise" | "freelance
   return "enterprise";
 }
 
-export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProps) {
+export function ProposalWorkspace({ initialRunId = null, mode = "default" }: ProposalWorkspaceProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const effectiveRunId = useMemo(() => {
     const q = searchParams.get("run")?.trim();
     if (q) return q;
+    if (mode === "new") return null;
     return (initialRunId ?? "").trim() || null;
-  }, [searchParams, initialRunId]);
+  }, [searchParams, initialRunId, mode]);
   const fileRef = useRef<HTMLInputElement>(null);
   const pendingLearningRef = useRef<string | null>(null);
   /** RFP text that last completed run / hydration used — when `briefDraft` diverges, titles must not stay on the old job. */
@@ -145,6 +148,22 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     setTitleDraft(fallbackProposalExportTitle(briefDraft, generated, null));
   }, 400);
 
+  /** Hard reset on explicit New Proposal route. */
+  useEffect(() => {
+    if (mode !== "new") return;
+    resetRunState();
+    resetDraftStore();
+    setBriefDraft("");
+    setTitleDraft("");
+    setPatternOpen(false);
+    setActionMsg(null);
+    setRightTab("proposal");
+    lastCommittedBriefRef.current = null;
+    pendingLearningRef.current = null;
+    latestRunHydratedRef.current = true; // never auto-hydrate latest while in new mode
+    skipLatestRunHydrateOnceRef.current = true;
+  }, [mode, resetDraftStore, resetRunState]);
+
   useEffect(() => {
     briefDraftRef.current = briefDraft;
   }, [briefDraft]);
@@ -200,6 +219,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
 
   useEffect(() => {
     if (!isAuthReady || !isSignedIn) return;
+    if (mode === "new") return;
     if (effectiveRunId) return;
     if (latestRunHydratedRef.current) return;
     if (skipLatestRunHydrateOnceRef.current) {
@@ -232,7 +252,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
     return () => {
       cancelled = true;
     };
-  }, [apiClient, effectiveRunId, isAuthReady, isSignedIn, router]);
+  }, [apiClient, effectiveRunId, isAuthReady, isSignedIn, router, mode]);
 
   useEffect(() => {
     const rid = effectiveRunId;
@@ -644,7 +664,7 @@ export function ProposalWorkspace({ initialRunId = null }: ProposalWorkspaceProp
           <span className="font-display text-[15px] font-semibold tracking-[-0.02em]">BidForge</span>
         </Link>
         <Link
-          href="/proposal"
+          href="/proposal/new"
           className="text-[13px] font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
           New

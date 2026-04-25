@@ -32,7 +32,7 @@ export default function DashboardPage() {
               Paste a brief and generate a structured draft with review and timeline in one flow.
             </p>
             <Link
-              href="/proposal"
+              href="/proposal/new"
               className={cn(
                 buttonVariants({ size: "lg" }),
                 "mt-8 inline-flex h-12 items-center gap-2 rounded-xl px-8 text-[15px] font-semibold",

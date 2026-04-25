@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 from app.core.config import settings
-from app.integrations.postgrest_errors import is_missing_relation_error
+from app.integrations.postgrest_errors import is_column_missing_error, is_missing_relation_error
 from app.integrations.supabase_tables import T_PROPOSAL_EVENTS, T_PROPOSALS
 
 if TYPE_CHECKING:
@@ -79,9 +79,10 @@ def probe_supabase_proposals_table() -> SupabaseProposalProbe:
     if sb is None:
         return "no_env"
     try:
-        sb.table(T_PROPOSALS).select("id").limit(1).execute()
+        # Must include required source-of-truth columns (`input_text`) to catch stale schema cache early.
+        sb.table(T_PROPOSALS).select("id,input_text,pipeline_mode").limit(1).execute()
     except Exception as e:  # noqa: BLE001
-        if is_missing_relation_error(e):
+        if is_missing_relation_error(e) or is_column_missing_error(e):
             return "missing_table"
         log.warning("probe %s: %s", T_PROPOSALS, e)
         return "error"

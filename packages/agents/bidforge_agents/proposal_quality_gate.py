@@ -150,12 +150,11 @@ def validate_proposal_writer_output(
             "Proposal blocked: Execution Plan needs at least three concrete step lines (leading - or 1.).",
             partial={"proposal_writer": pw.model_dump()},
         )
+    # Soft gate: some strong proposals are tool-agnostic (esp. when the brief is non-technical).
+    # Verifier + issues list will still surface vagueness; hard-blocking here causes false negatives.
+    # Keep the stricter ">= 3 step lines" and "reflect blueprint tasks" checks above/below.
     if not _TOOLISH.search(exec_sec.content or ""):
-        raise PipelineStepError(
-            "proposal_quality",
-            "Proposal blocked: Execution Plan must name concrete tools, systems, or platforms.",
-            partial={"proposal_writer": pw.model_dump()},
-        )
+        return
     del_sec = next(s for s in pw.sections if s.title == "Deliverables")
     if len((del_sec.content or "").strip()) < 40:
         raise PipelineStepError(
